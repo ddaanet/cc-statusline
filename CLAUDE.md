@@ -13,9 +13,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   to this checkout.
 - Manual render: pipe a payload into the script, isolated from the real home
   and cache, the same way the suite's `_sp_run` does:
-  `printf '%s' '{"model":{"display_name":"Opus 4.8"}}' | HOME=$TMPDIR/h COLUMNS=200 TX_CACHE_DIR=$TMPDIR/txc bash statusline-command.sh`
-  The last payload Claude Code sent is dumped to `/tmp/claude/statusbar.json`
-  (for debugging only, never a data source).
+  `printf '%s' '{"model":{"display_name":"Opus 4.8"}}' | HOME=$TMPDIR/h COLUMNS=200 CC_STATUSLINE_STATE_DIR=$TMPDIR/st bash statusline-command.sh`
+  The last payload Claude Code sent is dumped to `statusbar.json` in the state
+  dir (for debugging only, never a data source).
 
 ## Architecture
 
@@ -30,11 +30,17 @@ last line (`sparkline` per API call or `stats` per user turn, selected by
 - **One payload fork.** Every payload field is extracted in a single `jq` call,
   joined by U+001F and split with `read`. Add new fields to that one call, not
   a new `jq` fork.
+- **Private state dir.** The payload dump, timing log and both caches live in
+  `${CC_STATUSLINE_STATE_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/cc-statusline}`,
+  resolved once per render by `cc_state_dir_init` (`lib/format-utils.sh`) into
+  `CC_STATE_DIR`: created 0700, accepted only if owned by the user and not a
+  symlink (`_cc_private_dir`), else empty and everything runs uncached. Never
+  write state anywhere else, and never under `/tmp`.
 - **Transcript work is cached.** Anything derived from the session `.jsonl`
   goes through `_tx_cached` in `lib/transcript-cache.sh` (keyed on size +
-  mtime, under `/tmp/claude/tx-cache/`). The cache dir is shared, so a hit is
-  only accepted after a per-kind `_tx_valid_<kind>` validator; a new cache kind
-  without a validator is always a miss.
+  mtime, under the state dir's `tx-cache/`, or `$TX_CACHE_DIR`). A hit is still
+  only accepted after a per-kind `_tx_valid_<kind>` validator (defence in
+  depth); a new cache kind without a validator is always a miss.
 - **Width.** Claude Code does not pass the column count; `get_cols` probes it
   and a chrome reservation is subtracted to form `EFFECTIVE_COLS`, which bounds
   every row. Line 1 reflows through tiers in `lib/line1-layout.sh`

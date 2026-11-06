@@ -122,7 +122,7 @@ distinguishable from the blocks around it by shape, not by colour.
 | `lib/turn-stats.sh` | Per-user-turn stats (line 2, `stats` mode) |
 | `lib/transcript-cache.sh` | `_tx_cached`: size+mtime memoisation of transcript `jq` output (§4.18) |
 | `lib/subagent-cost.sh` | Subagent cost from subagent transcripts |
-| `lib/format-utils.sh` | `humanize_tokens`, `format_turn_dur`, `format_age`, `window_elapsed_pct`, `plan_pace_color` |
+| `lib/format-utils.sh` | `humanize_tokens`, `format_turn_dur`, `format_age`, `window_elapsed_pct`, `plan_pace_color`; state dir `cc_state_dir_init` / `_cc_private_dir` / `_cc_write_file` (§4.18) |
 | `lib/colors.sh` | SGR constants: `RESET`, `RESET_FG`, `RESET_DIM`, `BOLD` |
 | *external* `account-validation.sh` | `get_mode` / `get_api_provider` / `validate_state`, shared with the `claude-account` switcher and kept in that repo. Located via `$CC_STATUSLINE_ACCOUNT_LIB`, else the first line of `~/.claude/statusline-account-lib`, else `$HOME/code/cc-switch/lib/account-validation.sh`. Absent → no-op fallbacks (mode `plan`, provider `anthropic`, state consistent) and the account badge is skipped |
 
@@ -132,8 +132,8 @@ The entry point resolves its own directory through the `~/.claude/statusline-com
 
 | Source | Used for |
 |--------|----------|
-| Statusline JSON payload (also dumped to `/tmp/claude/statusbar.json` for debugging) | model, dir, cost, `context_window.current_usage`, `rate_limits`, `effort.level`, `output_style.name`, `fast_mode`, `thinking.enabled` |
-| Session transcript `.jsonl` | sparkline / stats streams, context fallback, cache-expiry timestamp — all via `/tmp/claude/tx-cache/` (§4.18) |
+| Statusline JSON payload (also dumped to `statusbar.json` in the private state dir for debugging, §4.18) | model, dir, cost, `context_window.current_usage`, `rate_limits`, `effort.level`, `output_style.name`, `fast_mode`, `thinking.enabled` |
+| Session transcript `.jsonl` | sparkline / stats streams, context fallback, cache-expiry timestamp — all via the state dir's `tx-cache/` (§4.18) |
 | `<session>/subagents/agent-*.jsonl` | subagent cost |
 | `stats-cache.json` | API-mode daily/weekly token counts |
 | `~/.claude/account-mode` | account badge |
@@ -507,7 +507,7 @@ keeps the section gap at exactly the canonical two columns.
 The payload's `total_cost_usd` is main-thread only. `lib/subagent-cost.sh`
 computes per-subagent cost from `<session>/subagents/agent-*.jsonl` token usage ×
 per-model base price (cache read ×0.1, 5m write ×1.25, 1h write ×2.0), deduped
-by `message.id`, cached by file size + mtime.
+by `message.id`, cached by file size + mtime in the private state dir (§4.18).
 
 Validated by reproducing a session's main-thread `total_cost_usd` from its
 transcript (Opus 4.8 = $5/$25). `claude-model-info.py` misprices Opus 4.8 as
@@ -756,7 +756,7 @@ used (`total_input_tokens`, `total_output_tokens`, `context_window_size`,
 `total_duration_ms`, `total_lines_added`, `total_lines_removed`) were dropped.
 
 **Transcript.** `_tx_cached <kind> <transcript> <producer…>` stores the
-producer's raw output in `/tmp/claude/tx-cache/<path with / → _>.<kind>`; line 1
+producer's raw output in `<state dir>/tx-cache/<path with / → _>.<kind>`; line 1
 is the `size:mtime` signature, the rest is the body. A signature match skips the
 producer. Writes go through a temp file and `mv`, so concurrent renders never
 see a half-written body. One file per transcript and kind, overwritten in place.
@@ -770,8 +770,47 @@ the last non-zero token total, replacing the two separate scans in
 lines and falls back to the whole file only if that window holds neither value,
 so a transcript tail of sidechain or user noise still resolves.
 
-**A hit is validated before use.** `/tmp/claude/tx-cache` is writable by other
-local users, and the consumers pass cached fields to `date -d` and bash
+**State lives in a private per-user directory.** The payload dump
+(`statusbar.json`), the timing log (`statusline-timing.log`), the subagent cost
+cache (`subagent-cost-cache`, §4.13) and the transcript cache (`tx-cache/`) all
+live in one state dir, resolved once per render by `cc_state_dir_init` in
+`lib/format-utils.sh`: `$CC_STATUSLINE_STATE_DIR`, else
+`$XDG_RUNTIME_DIR/cc-statusline`, else `$HOME/.cache/cc-statusline` (macOS has
+no `XDG_RUNTIME_DIR`), with trailing slashes dropped (a `TX_CACHE_DIR` override
+ending in `/` is refused instead, since `-L dir/` tests the target). `_cc_private_dir` creates
+it 0700 under `umask 077` and accepts it only if the path is absolute and the
+dir is not a symlink, is a directory, and is owned by the current user (`-O`);
+`-L` is tested first because `-d`, `-O` and `mkdir -p` all follow a link. When
+it is refused — a symlink (even to a dir the user owns), a regular file, a dir
+owned by someone else, a relative path, or a path that cannot be created —
+`CC_STATE_DIR` is empty: the dump and the timing log are skipped, subagent and
+transcript work is computed uncached, and the render is otherwise unchanged and
+exits 0.
+
+The shared, world-writable `/tmp/claude` this replaces let another local user
+pre-create the directory and plant symlinks: the dump and the timing log were
+written through them, clobbering or appending to any file the user owns and
+leaking the payload, and subagent-cost hits were read back unvalidated into the
+displayed cost. Those are worse than the cosmetic residual a shared transcript
+cache leaves, and once a private dir exists the transcript cache uses it too.
+Inside it, writes still do not trust what they find. The dump is replaced
+through a temp file and `mv` (a planted symlink is replaced, not followed, and a
+concurrent render never reads half a file); the timing log and the subagent
+cache are not written through a symlink. Both append-only files are dropped and
+started over past 262144 bytes, since the state dir, unlike `/tmp`, may survive
+a reboot. A subagent-cost hit must match the exact shape `subagent_cost` prints
+— `%.6f` with no leading zero, or the bare `0` of its early returns — or it is a
+miss and is recomputed; a path holding a tab or newline is never cached, since
+the record is one tab-split line. `TX_CACHE_DIR` overrides the transcript cache
+location (the test suite uses it), and `_tx_cached` holds an override to the
+same `_cc_private_dir` check on every call before it reads or writes; the check
+is builtins only unless the dir has to be created. Only the last path component
+is checked: an override inside a directory another user owns could still be
+swapped after the check, so the override is the user's own responsibility.
+
+**A hit is validated before use.** The dir is private, but validation stays as
+defence in depth (the dir's mode is the user's to loosen, and an override may
+point anywhere), because the consumers pass cached fields to `date -d` and bash
 arithmetic (`$(( ))` evaluates `a[$(cmd)]`). `_tx_cached` therefore accepts a hit
 only if `_tx_body_ok` passes, and anything else is a miss that is regenerated
 and overwritten. The rules, all in `lib/transcript-cache.sh`:
@@ -831,8 +870,8 @@ by the largest legitimate body. Every read is bounded: the signature line is
 read with `read -r -n 64` (a real one is under 40 characters), so a planted
 multi-megabyte file with no newline reads as a truncated signature, which cannot
 match, and is a miss; with a plain `read -r` it cost about a second per 20 MB on
-every render until overwritten. A per-user 0700 directory would remove the
-planted-body residual altogether; it was considered and rejected (§5).
+every render until overwritten. In a private state dir only the user can plant
+a body at all, so this residual applies only to a loosened dir or an override.
 
 **Only raw `jq` output is cached, never anything derived from `now`.** Running
 turn duration, the idle check and expiry-versus-now stay in bash, so a cache hit
@@ -879,17 +918,6 @@ overage balance the payload lacks entirely. Rejected for now: it would give the
 statusline its first network dependency and a staleness/failure path on every
 render, against NFR2. The 99 → 100 promotion buys the same display for no
 runtime cost. Revisit if the overage balance itself becomes worth showing.
-
-**A per-user 0700 transcript-cache directory** (considered 2026-10-08, §4.18).
-It would stop other local users from planting a cache body at all. Rejected:
-validation and the line and byte caps already remove the evaluation risk, the
-arithmetic and `date` errors, and the render-cost stall, so what a planted body
-can still do is show wrong but in-range numbers on a statusline until the
-transcript changes, at a render cost bounded by the largest legitimate body.
-Closing that residual would need a per-user path and an ownership check on every
-render, and a hostile pre-created directory is a new failure mode to handle, for
-a cosmetic exposure. Revisit if the cache ever holds something a wrong value
-could make a user act on.
 
 **A `>= 99` at-limit threshold** (considered 2026-07-29). Would have kept
 displaying the literal `99%` and merely restyled it, matching
@@ -991,3 +1019,4 @@ settled on. Recorded rather than fixed.
 | 2026-10-09 | Signature line of a cache file read with `read -r -n 64` (a planted newline-less file is a miss, not slurped); dead digits check dropped from `_tx_lines_match`; `format_cache_expiry` on macOS strips the fraction and `Z` and parses as UTC (BSD `date -j -f` rejects trailing text and reads local time, so the expiry was empty or hours off) |
 | 2026-10-09 | `vis_truncate` classifies UTF-8 continuation bytes by membership in a byte set (`_VT_CONT`) instead of by the value of `printf %d "'<byte>"`, which bash 3.2 (macOS `/bin/bash`) returns negative for a byte above 0x7F, so every continuation byte counted as a cell |
 | 2026-11-06 | Extracted into the `cc-statusline` repository: `lib/` sourced relative to the resolved script location, `account-validation.sh` left with `claude-account` and located via `$CC_STATUSLINE_ACCOUNT_LIB` / pointer file / default with no-op fallbacks |
+| 2026-11-06 | `/tmp/claude` replaced by a private per-user state dir (`$CC_STATUSLINE_STATE_DIR` / `$XDG_RUNTIME_DIR` / `~/.cache`, `cc-statusline`, 0700, owner-checked, not a symlink) for the payload dump, timing log, subagent cost cache and transcript cache; dump written by temp file + `mv`; subagent hits shape-checked; append-only files capped at 262144 bytes; per-user directory removed from §5 and adopted in §4.18 |

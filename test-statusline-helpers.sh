@@ -8,6 +8,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/statusline-test.XXXXXX") || { echo "FATAL: cannot create scratch dir"; exit 2; }
 trap 'rm -rf "$TEST_TMP"' EXIT
 
+# Every state write — in-process calls and the rendered script alike — lands in
+# a test-owned dir: never the real $HOME, $XDG_RUNTIME_DIR or /tmp.
+unset XDG_RUNTIME_DIR
+_st_dir="$TEST_TMP/state"
+export CC_STATUSLINE_STATE_DIR="$_st_dir"
+
 # Account-validation lib: same resolution as statusline-command.sh
 # (env var, pointer file, default); fallbacks when absent.
 if [[ -z "${CC_STATUSLINE_ACCOUNT_LIB:-}" && -r "$HOME/.claude/statusline-account-lib" ]]; then
@@ -59,6 +65,8 @@ type layout_line1 >/dev/null 2>&1 || { echo "FATAL: layout_line1 not loaded"; ex
 type render_timer >/dev/null 2>&1 || { echo "FATAL: render_timer not loaded"; exit 2; }
 type render_model_sec >/dev/null 2>&1 || { echo "FATAL: render_model_sec not loaded"; exit 2; }
 type set_model_sec >/dev/null 2>&1 || { echo "FATAL: set_model_sec not loaded"; exit 2; }
+
+cc_state_dir_init
 
 PASS=0; FAIL=0
 assert() {
@@ -1017,9 +1025,37 @@ cat > "$_cac_fix" <<'JSONL'
 {"type":"assistant","isSidechain":true,"message":{"id":"m1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":10,"output_tokens":300,"cache_read_input_tokens":0,"cache_creation_input_tokens":18887,"cache_creation":{"ephemeral_5m_input_tokens":18887,"ephemeral_1h_input_tokens":0}}}}
 JSONL
 _cac_key="$_cac_fix:$(_stat_sig "$_cac_fix")"
-mkdir -p /tmp/claude
-printf '%s\t%s\n' "/POISON$_cac_key" "9.999999" >> /tmp/claude/subagent-cost-cache
+_sc_cache="$_st_dir/subagent-cost-cache"
+mkdir -p "$_st_dir"
+printf '%s\t%s\n' "/POISON$_cac_key" "9.999999" >> "$_sc_cache"
 assert "cache lookup not fooled by suffix key" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
+
+echo "## _cached_subagent_cost in the private state dir"
+rm -f "$_sc_cache"
+_cached_subagent_cost "$_cac_fix" >/dev/null
+assert "miss is recorded in the state dir" \
+    "$(grep -cxF "$_cac_key"$'\t'"0.020095" "$_sc_cache" 2>/dev/null)" "1"
+# A planted well-formed value is returned, so the lookups below read this file.
+printf '%s\t%s\n' "$_cac_key" "0.123456" > "$_sc_cache"
+assert "well-formed hit is returned" "$(_cached_subagent_cost "$_cac_fix")" "0.123456"
+printf '%s\t%s\n' "$_cac_key" "0" > "$_sc_cache"
+assert "bare 0 hit (empty transcript) is returned" "$(_cached_subagent_cost "$_cac_fix")" "0"
+# shellcheck disable=SC2016  # literal $( ) is the payload
+for _sc_bad in '9.9e9' '$(x)' '1.5' '-0.123456' '0.1234567' '00.123456' ' 0.123456' '0.123456 '; do
+    printf '%s\t%s\n' "$_cac_key" "$_sc_bad" > "$_sc_cache"
+    assert "malformed hit '$_sc_bad' is a miss" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
+done
+# Append-only cache: past its size bound it is dropped and started over.
+{ for _sc_i in $(seq 1 8000); do printf '/junk/agent-%04d.jsonl:100:%d\t0.000001\n' "$_sc_i" "$_sc_i"; done
+  printf '%s\t%s\n' "$_cac_key" "0.123456"; } > "$_sc_cache"
+assert "oversized cache is a miss" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
+assert "oversized cache is started over" "$(wc -l < "$_sc_cache" | tr -d ' ')" "1"
+printf 'ORIG' > "$TEST_TMP/sc-victim"; rm -f "$_sc_cache"; ln -s "$TEST_TMP/sc-victim" "$_sc_cache"
+assert "planted cache link: computed" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
+assert "planted cache link: target untouched" "$(cat "$TEST_TMP/sc-victim")" "ORIG"
+rm -f "$_sc_cache"
+assert "no state dir: computed, uncached" \
+    "$(CC_STATE_DIR='' _cached_subagent_cost "$_cac_fix" 2>&1)" "0.020095"
 rm -f "$_cac_fix"
 
 echo "## _tx_cached"
@@ -1065,7 +1101,25 @@ assert "oversized signature line: miss, producer ran" "$_tc_big|$(_tc_runs)" "bo
 assert "oversized signature line: read is bounded"    "$(( _tc_dt < 2 ))" "1"
 assert "oversized signature line: overwritten, next render hits" \
     "$(_tx_cached k "$_tc_tx" _tc_prod)|$(_tc_runs)" "body:11|1"
-unset TX_CACHE_DIR; TX_CACHE_DIR=/tmp/claude/tx-cache
+# An override is held to the same rule as the default dir: a symlink (here to a
+# dir the user owns, so only the link check can refuse it) is neither read nor
+# written, and the producer output is still returned.
+_tc_victim="$TEST_TMP/txc-victim"; mkdir -p "$_tc_victim"
+ln -s "$_tc_victim" "$TEST_TMP/txc-link"; TX_CACHE_DIR="$TEST_TMP/txc-link"
+: > "$_tc_cnt"
+assert "symlinked TX_CACHE_DIR: producer output returned" "$(_tx_cached k "$_tc_tx" _tc_prod)" "body:11"
+assert "symlinked TX_CACHE_DIR: nothing written through it" "$(find "$_tc_victim" -mindepth 1 | wc -l | tr -d ' ')" "0"
+{ printf '%s\n' "$(_stat_sig "$_tc_tx")"; printf 'planted\n'; } > "$_tc_victim/${_tc_tx//\//_}.k"
+assert "symlinked TX_CACHE_DIR: not read through either" "$(_tx_cached k "$_tc_tx" _tc_prod)" "body:11"
+rm -f "$_tc_victim"/*
+TX_CACHE_DIR="$TEST_TMP/txc-link/"
+_tx_cached k "$_tc_tx" _tc_prod >/dev/null
+assert "symlinked TX_CACHE_DIR with trailing slash: nothing written through it" "$(find "$_tc_victim" -mindepth 1 | wc -l | tr -d ' ')" "0"
+# The default sits in the private state dir.
+unset TX_CACHE_DIR
+rm -rf "$_st_dir/tx-cache"
+_tx_cached k "$_tc_tx" _tc_prod >/dev/null
+assert "default tx cache lives in the state dir" "$(find "$_st_dir/tx-cache" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" "1"
 
 echo "## get_transcript_context / format_cache_expiry share one pass"
 TX_CACHE_DIR="$TEST_TMP/txc2"
@@ -1085,7 +1139,7 @@ _tw="$TEST_TMP/window.jsonl"
 { printf '{"type":"assistant","timestamp":"2026-01-02T00:00:00.000Z","message":{"usage":{"output_tokens":7}}}\n'
   for _i in $(seq 1 1600); do printf '{"type":"user","message":{"content":"x"}}\n'; done; } > "$_tw"
 assert "full-file fallback when tail window empty" "$(get_transcript_context "$_tw")" "7"
-TX_CACHE_DIR=/tmp/claude/tx-cache
+unset TX_CACHE_DIR
 
 echo "## planted cache bodies are rejected, never evaluated"
 # Only spark/stats fields reach an evaluating sink (bash arithmetic), so the
@@ -1244,7 +1298,7 @@ rm -rf "$TX_CACHE_DIR"; : > "$_hx_cnt"
 _hx_prod() { echo x >> "$_hx_cnt"; printf 'U 1\nA r1 5 1 2 3 4 end_turn\n'; }
 _tx_cached stats "$_hx" _hx_prod >/dev/null; _tx_cached stats "$_hx" _hx_prod >/dev/null
 assert "valid stats body is a cache hit" "$(_hx_runs)" "1"
-TX_CACHE_DIR=/tmp/claude/tx-cache
+unset TX_CACHE_DIR
 
 echo "## statusline-command.sh payload parsing (one jq fork, no eval)"
 _sp_home="$TEST_TMP/sphome"; mkdir -p "$_sp_home/.claude"
@@ -1271,6 +1325,62 @@ assert "plan limits: 0% window present, 7d present" "$([[ "$_sp_out3" == *'5h '*
 _sp_out4=$(_sp_run '{"model":{"display_name":"Opus 4.8"}}')
 assert "plan limits absent → no Plan section" "$([[ "$_sp_out4" == *Plan* ]] && echo shown || echo hidden)" "hidden"
 assert "empty payload exits 0" "$(printf '' | HOME="$_sp_home" bash "$HERE/statusline-command.sh" >/dev/null 2>&1; echo $?)" "0"
+
+echo "## private state directory"
+_st_payload='{"model":{"display_name":"Opus 4.8"}}'
+_st_run() { # $1=state dir → "<exit status>|<output or none>|<stderr: clean or noisy>"
+    local out rc err="$TEST_TMP/st-err"
+    out=$(printf '%s' "$_st_payload" | HOME="$_sp_home" COLUMNS=200 \
+        MODE_FILE="$_sp_home/.claude/account-mode" CC_STATUSLINE_STATE_DIR="$1" bash "$HERE/statusline-command.sh" 2>"$err")
+    rc=$?
+    printf '%s|%s|%s' "$rc" "$([[ "$out" == *Opus* ]] && echo output || echo none)" \
+        "$([[ -s "$err" ]] && echo noisy || echo clean)"
+}
+_st_good="$TEST_TMP/st-good"
+assert "good dir: render exits 0 with output" "$(_st_run "$_st_good")" "0|output|clean"
+assert "good dir: payload dumped there" "$(cat "$_st_good/statusbar.json" 2>/dev/null)" "$_st_payload"
+# shellcheck disable=SC2012  # only the mode column is read; stat -c/-f diverge
+assert "good dir: created 0700" "$(ls -ld "$_st_good" 2>/dev/null | cut -c1-10)" "drwx------"
+
+# The timing log needs GNU `date +%s%3N`; where it is unavailable no log is kept.
+if [[ "$(date +%s%3N 2>/dev/null)" =~ ^[0-9]+$ ]]; then
+    for _st_i in $(seq 1 8000); do printf '2026-01-01T00:00:00+00:00 %dms\n' "$_st_i"; done > "$_st_good/statusline-timing.log"
+    _st_run "$_st_good" >/dev/null
+    assert "oversized timing log is started over" "$(wc -l < "$_st_good/statusline-timing.log" | tr -d ' ')" "1"
+fi
+
+# A symlinked state dir is refused even when it points at a dir the user owns.
+_st_victim="$TEST_TMP/st-victim"; mkdir -p "$_st_victim"
+ln -s "$_st_victim" "$TEST_TMP/st-link"
+assert "symlinked dir: render exits 0 with output" "$(_st_run "$TEST_TMP/st-link")" "0|output|clean"
+assert "symlinked dir: nothing written through it" "$(find "$_st_victim" -mindepth 1 | wc -l | tr -d ' ')" "0"
+printf 'keep' > "$TEST_TMP/st-file"
+assert "regular file as dir: render exits 0 with output" "$(_st_run "$TEST_TMP/st-file")" "0|output|clean"
+
+# Symlinks planted inside a verified dir are replaced or skipped, never followed.
+_st_plant="$TEST_TMP/st-plant"; mkdir -m 700 "$_st_plant"
+printf 'ORIG' > "$TEST_TMP/st-dump-victim"; printf 'ORIG' > "$TEST_TMP/st-log-victim"
+ln -s "$TEST_TMP/st-dump-victim" "$_st_plant/statusbar.json"
+ln -s "$TEST_TMP/st-log-victim" "$_st_plant/statusline-timing.log"
+assert "planted links: render exits 0 with output" "$(_st_run "$_st_plant")" "0|output|clean"
+assert "planted dump link: target untouched" "$(cat "$TEST_TMP/st-dump-victim")" "ORIG"
+assert "planted dump link: replaced by the dump" \
+    "$([[ -f "$_st_plant/statusbar.json" && ! -L "$_st_plant/statusbar.json" ]] && cat "$_st_plant/statusbar.json")" "$_st_payload"
+assert "planted log link: target untouched" "$(cat "$TEST_TMP/st-log-victim")" "ORIG"
+
+echo "## cc_state_dir_init resolution"
+assert "XDG_RUNTIME_DIR used when no override" \
+    "$(unset CC_STATUSLINE_STATE_DIR; XDG_RUNTIME_DIR="$TEST_TMP/xdg" cc_state_dir_init; echo "${CC_STATE_DIR:-}")" "$TEST_TMP/xdg/cc-statusline"
+assert "\$HOME/.cache fallback without XDG_RUNTIME_DIR" \
+    "$(unset CC_STATUSLINE_STATE_DIR; HOME="$TEST_TMP/rh" cc_state_dir_init; echo "${CC_STATE_DIR:-}")" "$TEST_TMP/rh/.cache/cc-statusline"
+assert "relative override refused" \
+    "$(cd "$TEST_TMP" && CC_STATUSLINE_STATE_DIR=rel cc_state_dir_init; echo "${CC_STATE_DIR:-none}"; [[ -e rel ]] && echo created)" "none"
+assert "symlinked override refused" \
+    "$(CC_STATUSLINE_STATE_DIR="$TEST_TMP/st-link" cc_state_dir_init; echo "${CC_STATE_DIR:-none}")" "none"
+assert "symlinked override with trailing slashes refused" \
+    "$(CC_STATUSLINE_STATE_DIR="$TEST_TMP/st-link//" cc_state_dir_init; echo "${CC_STATE_DIR:-none}")" "none"
+assert "trailing slash on a good override is dropped" \
+    "$(CC_STATUSLINE_STATE_DIR="$_st_good/" cc_state_dir_init; echo "${CC_STATE_DIR:-none}")" "$_st_good"
 
 echo
 if (( FAIL == 0 )); then

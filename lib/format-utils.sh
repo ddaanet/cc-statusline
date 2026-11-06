@@ -304,3 +304,60 @@ _stat_sig() {
     mt=$(stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null)
     printf '%s:%s' "${sz:-0}" "${mt:-0}"
 }
+
+# Byte size of a file (GNU stat, then BSD/macOS stat); 0 when unknown, so the
+# result is always safe in arithmetic.
+_file_size() {
+    local sz
+    sz=$(stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null)
+    [[ "$sz" =~ ^[0123456789]{1,18}$ ]] || sz=0
+    printf '%s' "$((10#$sz))"
+}
+
+# _cc_private_dir <dir>
+# Succeeds only if <dir> is an absolute path to a directory owned by the current
+# user and is not itself a symlink, creating it 0700 (umask 077) when absent.
+# A trailing slash is refused: `-L dir/` tests the link's target, not the link.
+# Other local users can create neither such a dir nor anything inside it once
+# it is 0700, so files under it are safe to write and to read back. `-L` is
+# tested first: `-d` and `-O` follow a symlink, and `mkdir -p` succeeds silently
+# on a symlink to a dir. Callers that get a failure compute uncached.
+_cc_private_dir() {
+    [[ "$1" == /* && "$1" != */ ]] || return 1
+    [[ -e "$1" || -L "$1" ]] || (umask 077; mkdir -p -- "$1") 2>/dev/null
+    [[ ! -L "$1" && -d "$1" && -O "$1" ]]
+}
+
+# cc_state_dir_init
+# Sets CC_STATE_DIR, once per render, to the private per-user state dir holding
+# the payload dump, the timing log and both caches (statusline-design.md §4.18):
+# $CC_STATUSLINE_STATE_DIR, else $XDG_RUNTIME_DIR/cc-statusline, else
+# $HOME/.cache/cc-statusline (macOS has no XDG_RUNTIME_DIR). Set to empty when
+# that dir is unusable; every consumer then skips its write or computes
+# uncached. Always returns 0.
+# shellcheck disable=SC2034  # CC_STATE_DIR is read by the other libs
+cc_state_dir_init() {
+    local base d
+    CC_STATE_DIR=
+    d=${CC_STATUSLINE_STATE_DIR:-}
+    if [[ -z "$d" ]]; then
+        base=${XDG_RUNTIME_DIR:-}
+        [[ -n "$base" ]] || { [[ -n "${HOME:-}" ]] && base=$HOME/.cache; }
+        [[ -n "$base" ]] && d=$base/cc-statusline
+    fi
+    while [[ "$d" == */ ]]; do d=${d%/}; done
+    if _cc_private_dir "$d"; then CC_STATE_DIR=$d; fi
+    return 0
+}
+
+# _cc_write_file <path> <content>
+# Replace <path> with <content> + newline through a temp file and `mv`: rename
+# replaces a planted symlink instead of writing through it, and a concurrent
+# render never reads half a file. Failures are silent.
+_cc_write_file() {
+    local tmp
+    tmp=$(mktemp "${1%/*}/.tmp.XXXXXX" 2>/dev/null) || return 0
+    if printf '%s\n' "$2" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$1" 2>/dev/null; fi
+    rm -f "$tmp" 2>/dev/null
+    return 0
+}

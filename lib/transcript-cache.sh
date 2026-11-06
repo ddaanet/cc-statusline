@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # Memoise transcript-derived `jq` output across renders. Source after
-# format-utils.sh (needs _stat_sig).
+# format-utils.sh (needs _stat_sig, _cc_private_dir).
 #
 # The statusline re-runs on every redraw, and most redraws (refresh timer,
 # perm-mode or vim toggle) see an unchanged transcript. Only the raw producer
 # output is cached; anything that depends on "now" (running-turn duration, idle
 # check, expiry) stays in the callers.
+#
+# The cache lives in $TX_CACHE_DIR, else $CC_STATE_DIR/tx-cache (the private
+# per-user state dir, see cc_state_dir_init in format-utils.sh). Either is used
+# only if _cc_private_dir accepts it (owned by the user, not a symlink); else
+# every call runs its producer uncached.
 
-TX_CACHE_DIR=${TX_CACHE_DIR:-/tmp/claude/tx-cache}
-
-# The cache directory is shared and writable by other local users, so a hit is
-# not trusted: callers feed these bodies to `date -d` and bash arithmetic, where
-# a planted value such as `a[$(cmd)]` would execute. Each kind below accepts only
-# the exact line shapes its producer emits; a body that fails is a miss and is
-# regenerated. A kind with no validator is never accepted (always a miss), so a
-# new kind must add a `_tx_valid_<kind>` before it can be cached.
+# The dir is private, but a hit is still not trusted (defence in depth: the
+# dir's own mode is the user's to loosen): callers feed these bodies to `date
+# -d` and bash arithmetic, where a planted value such as `a[$(cmd)]` would
+# execute. Each kind below accepts only the exact line shapes its producer
+# emits; a body that fails is a miss and is regenerated. A kind with no
+# validator is never accepted (always a miss), so a new kind must add a
+# `_tx_valid_<kind>` before it can be cached.
 #
 # Integers have no leading zero (arithmetic reads `08` as an invalid octal base)
 # and at most 18 digits (they must fit a signed 64-bit integer). `0` is valid:
@@ -95,7 +99,10 @@ _tx_body_ok() {
 _tx_cached() {
     local kind=$1 tx=$2; shift 2
     local key=${tx//\//_} sig cache first body tmp
-    cache="$TX_CACHE_DIR/$key.$kind"
+    local dir=${TX_CACHE_DIR:-${CC_STATE_DIR:+$CC_STATE_DIR/tx-cache}}
+    # Same rule for the default and an override: no private dir, no caching.
+    _cc_private_dir "$dir" || { "$@" "$tx"; return; }
+    cache="$dir/$key.$kind"
     sig=$(_stat_sig "$tx")
     if [[ -f "$cache" ]]; then
         # -n 64: a real signature is under 40 characters, and a planted file with
@@ -109,8 +116,7 @@ _tx_cached() {
         fi
     fi
     body=$("$@" "$tx"; printf x)
-    mkdir -p "$TX_CACHE_DIR" 2>/dev/null
-    tmp=$(mktemp "$TX_CACHE_DIR/.tmp.XXXXXX" 2>/dev/null) && {
+    tmp=$(mktemp "$dir/.tmp.XXXXXX" 2>/dev/null) && {
         { printf '%s\n' "$sig"; printf '%s' "${body%x}"; } > "$tmp" && mv -f "$tmp" "$cache" 2>/dev/null
         rm -f "$tmp" 2>/dev/null
     }

@@ -54,12 +54,6 @@
 # Read JSON input from stdin
 input=$(cat)
 
-# IMPORTANT: statusbar.json is for debugging ONLY
-# - NOT a cache (not invalidated on session switch)
-# - Do NOT use for token calculations
-# - Always parse transcript for accurate, session-specific data
-mkdir -p /tmp/claude
-echo "$input" > /tmp/claude/statusbar.json
 _sl_start_ms=$(date +%s%3N 2>/dev/null); [[ "$_sl_start_ms" =~ ^[0-9]+$ ]] || _sl_start_ms=0
 
 # Every payload field the script uses, in ONE jq fork (statusline-design.md
@@ -128,6 +122,13 @@ source "$SCRIPT_DIR/lib/colors.sh" || exit 1
 source "$SCRIPT_DIR/lib/model-display.sh" || exit 1
 # shellcheck source=lib/format-utils.sh
 source "$SCRIPT_DIR/lib/format-utils.sh" || exit 1
+# Private per-user state dir (dump, timing log, caches), resolved once.
+cc_state_dir_init
+# IMPORTANT: statusbar.json is for debugging ONLY
+# - NOT a cache (not invalidated on session switch)
+# - Do NOT use for token calculations
+# - Always parse transcript for accurate, session-specific data
+[[ -n "$CC_STATE_DIR" ]] && _cc_write_file "$CC_STATE_DIR/statusbar.json" "$input"
 # shellcheck source=lib/transcript-cache.sh
 source "$SCRIPT_DIR/lib/transcript-cache.sh" || exit 1
 # shellcheck source=lib/sparkline.sh
@@ -345,9 +346,14 @@ fi
 
 # Ensure script exits successfully
 _sl_end_ms=$(date +%s%3N 2>/dev/null); [[ "$_sl_end_ms" =~ ^[0-9]+$ ]] || _sl_end_ms=0
-if (( _sl_start_ms > 0 && _sl_end_ms > 0 )); then
+# Timing log: appended in the state dir, never through a symlink, and dropped
+# once past _SL_LOG_MAX bytes so it cannot grow without bound.
+_sl_log=${CC_STATE_DIR:+$CC_STATE_DIR/statusline-timing.log}
+_SL_LOG_MAX=262144
+if [[ -n "$_sl_log" && ! -L "$_sl_log" ]] && (( _sl_start_ms > 0 && _sl_end_ms > 0 )); then
+    [[ -f "$_sl_log" ]] && (( $(_file_size "$_sl_log") > _SL_LOG_MAX )) && rm -f "$_sl_log"
     printf '%s %dms\n' "$(date -Iseconds)" "$(( _sl_end_ms - _sl_start_ms ))" \
-        >> /tmp/claude/statusline-timing.log
+        >> "$_sl_log" 2>/dev/null
 fi
 
 exit 0

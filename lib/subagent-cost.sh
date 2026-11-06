@@ -51,20 +51,37 @@ subagent_cost() {
                  (i*pin + cr*pin*0.1 + c5*pin*1.25 + c1*pin*2.0 + o*pout) / 1000000 }'
 }
 
-# Cost of one subagent file, memoised by path+size+mtime. A completed file is
-# static, so its cost is cached permanently; a growing (running) file re-parses
-# only when its signature changes.
+# Exact shapes subagent_cost prints: `%.6f` of a non-negative cost, or the bare
+# `0` of its early returns. A cached value that is anything else is a miss.
+# Digits are spelled out so the bash `=~` is locale-independent.
+_SC_COST='(0|(0|[123456789][0123456789]{0,11})\.[0123456789]{6})'
+# The cache is append-only (a running subagent appends a line per signature
+# change); past this many bytes it is dropped and started over.
+_SC_CACHE_MAX=262144
+
+# Cost of one subagent file, memoised by path+size+mtime in the private state
+# dir (CC_STATE_DIR, see cc_state_dir_init). A completed file is static, so its
+# cost is cached permanently; a growing (running) file re-parses only when its
+# signature changes. No state dir → computed uncached.
 _cached_subagent_cost() {
     local f=$1 key hit c
-    local cache=/tmp/claude/subagent-cost-cache
+    local cache=${CC_STATE_DIR:+$CC_STATE_DIR/subagent-cost-cache}
     key="$f:$(_stat_sig "$f")"
+    # A tab or newline in the path would break the one-line, tab-split record.
+    if [[ -z "$cache" || "$key" == *$'\t'* || "$key" == *$'\n'* || -L "$cache" ]]; then
+        subagent_cost "$f"
+        return
+    fi
     if [[ -f "$cache" ]]; then
-        hit=$(awk -F'\t' -v k="$key" '$1==k{v=$2} END{if(v!="")print v}' "$cache" 2>/dev/null)
-        if [[ -n "$hit" ]]; then printf '%s' "$hit"; return; fi
+        if (( $(_file_size "$cache") > _SC_CACHE_MAX )); then
+            rm -f "$cache"
+        else
+            hit=$(awk -F'\t' -v k="$key" '$1==k{v=$2} END{if(v!="")print v}' "$cache" 2>/dev/null)
+            if [[ "$hit" =~ ^$_SC_COST$ ]]; then printf '%s' "$hit"; return; fi
+        fi
     fi
     c=$(subagent_cost "$f")
-    mkdir -p /tmp/claude
-    printf '%s\t%s\n' "$key" "$c" >> "$cache"
+    printf '%s\t%s\n' "$key" "$c" >> "$cache" 2>/dev/null
     printf '%s' "$c"
 }
 

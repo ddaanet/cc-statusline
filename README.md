@@ -67,6 +67,12 @@ Flag files under `~/.claude/`:
 - `statusline-chrome-cols` overrides the number of columns reserved for Claude
   Code's own chrome around the status line.
 
+State (caches, a debug dump of the last payload, a timing log) lives in a
+private per-user directory: `$CC_STATUSLINE_STATE_DIR` if set, else
+`$XDG_RUNTIME_DIR/cc-statusline`, else `~/.cache/cc-statusline`. It is created
+mode 0700; if it is a symlink or not owned by you, the statusline runs uncached
+and writes nothing.
+
 ## Layout
 
 ```
