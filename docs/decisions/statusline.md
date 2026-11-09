@@ -11,13 +11,20 @@ dim state** (§4.11). Only `lib/sparkline.sh` uses `RESET`, deliberately.
 
 Display format:
 - Line 1: identity group, dir, branch, cost, context value and growth bar,
-  cache-expiry timer (§4.1, §4.17). It reflows onto extra rows rather than
+  cache-expiry timer (§4.1, §4.17). Cost is the payload's `total_cost_usd`
+  as-is, main-thread only: nothing is estimated (§5). It reflows onto extra rows rather than
   dropping sections.
 - Plan mode: limits on line 1, e.g. `Plan 5h 40%/80% ▃ 23:41 / 7d 20%/50% ▂ Tue`
   (§4.2).
 - API mode: an extra line `API  <switchback time | token usage>`, or
   `Auth state inconsistent` when the account library reports a mismatch.
 - Optional last line: per-call sparkline (default) or per-turn stats (§4.3–4.8).
+- Agent panel (`subagent-statusline.sh`): one row per subagent, e.g.
+  `▶ 4m12  general-purpose  ❷ Opus ● high  ⛁ 117k ██▃  ▁▂▃…` — status, agent
+  type, model/effort, context gauge, and a sparkline of the agent's last 16
+  calls (context size per call, 50k bands as fg-on-bg pairs, 300k+ solid bright
+  magenta). Cells drop oldest-first under width pressure, then the bar, then
+  labels. No cost; intensity never changed (§4.19).
 
 Indicators:
 - Model rank `❶ Fable` / `❷ Opus` / `❸ Sonnet` / `❹ Haiku`, then effort
@@ -52,7 +59,8 @@ use those.
 | 150–200k | Red |
 | 200k+ | Magenta (bar blocks alternate Magenta / Bright magenta from 250k) |
 
-Bright magenta in the bar is the only bright colour allowed (NFR7). Colour
+Bright magenta in the bar and in the subagent sparkline's top bands is the only
+bright colour allowed (NFR7). Colour
 coding (16-colour ANSI, theme-neutral): GREEN = input/additions, YELLOW =
 output, CYAN = cached/timing, RED = deletions.
 

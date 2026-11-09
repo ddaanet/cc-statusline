@@ -149,8 +149,6 @@ fi
 source "$SCRIPT_DIR/lib/account-display.sh" || exit 1
 # shellcheck source=lib/line1-layout.sh
 source "$SCRIPT_DIR/lib/line1-layout.sh" || exit 1
-# shellcheck source=lib/subagent-cost.sh
-source "$SCRIPT_DIR/lib/subagent-cost.sh" || exit 1
 
 # Wrapper for statusline (historically uses get_account_mode)
 get_account_mode() { get_mode; }
@@ -235,14 +233,8 @@ if [ -n "$BRANCH" ]; then
     fi
 fi
 
-# Fold in the cost of this session's subagents (payload cost is main-thread
-# only). Kept before COST_SEC so the displayed $ reflects the aggregate.
-if [[ "$COST" != "unset" ]]; then
-    _sub_cost=$(session_subagent_cost "$TRANSCRIPT_PATH")
-    COST=$(awk -v a="$COST" -v b="$_sub_cost" 'BEGIN { printf "%.8f", a + b }')
-fi
-
-# Cost section
+# Cost section: the payload's total_cost_usd as Claude Code reports it
+# (main thread only; no estimate is added for subagents, §5).
 if [ "$COST" = "unset" ]; then
     COST_SEC="${RESET_DIM}${BOLD}\$${RESET_DIM} -     "
 else

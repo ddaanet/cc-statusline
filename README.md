@@ -1,9 +1,11 @@
 # cc-statusline
 
 A two-to-three line status line for Claude Code, in plain bash: model, effort,
-directory, git branch, cost and context usage on line 1; account mode or plan
+directory, git branch, cost (main thread, as Claude Code reports it) and
+context usage on line 1; account mode or plan
 rate limits on line 2; an optional per-call token sparkline or per-turn stats
-line. The living design document is `statusline-design.md`; decisions are in
+line. A second script renders the rows of the agent panel, one per subagent.
+The living design document is `statusline-design.md`; decisions are in
 `docs/decisions/`, dated specs and plans in `plans/`.
 
 ## Requirements
@@ -18,9 +20,10 @@ line. The living design document is `statusline-design.md`; decisions are in
 just install
 ```
 
-This symlinks `~/.claude/statusline-command.sh` to the script in this checkout
-and prints the settings block. Then add to `~/.claude/settings.json`, with the
-path written out in full (Claude Code does not expand `~`):
+This symlinks `~/.claude/statusline-command.sh` and
+`~/.claude/subagent-statusline.sh` to the scripts in this checkout and prints
+the settings blocks. Then add to `~/.claude/settings.json`, with the paths
+written out in full (Claude Code does not expand `~`):
 
 ```json
 {
@@ -28,17 +31,44 @@ path written out in full (Claude Code does not expand `~`):
     "type": "command",
     "command": "/Users/david/.claude/statusline-command.sh",
     "refreshInterval": 60
+  },
+  "subagentStatusLine": {
+    "type": "command",
+    "command": "/Users/david/.claude/subagent-statusline.sh"
   }
 }
 ```
 
-`just uninstall` removes the symlink. `just test`, `just lint` and
+`just uninstall` removes both symlinks. `just test`, `just lint` and
 `just precommit` run the suite and shellcheck.
 
 Installation is a script rather than a plugin because a plugin's `settings`
 cannot carry `statusLine`: only the `agent` and `subagentStatusLine` keys take
 effect from a plugin. A plugin wrapper could later ship a setup skill that runs
 the same steps.
+
+## Subagent rows
+
+With `subagentStatusLine` set, each row of the agent panel shows, left to right:
+
+```
+▶ 4m12  general-purpose  ❷ Opus ● high  ⛁ 117k ██▃  ▁▁▂▂▃▃▄▅▅▆▇█▇▇██
+```
+
+- status: `▶` running (with its running time), `✔` completed, `✘` failed,
+  `■` killed
+- the agent type, with its name when it has one
+- model and effort, in the same glyphs as line 1
+- the agent's current context, coloured and barred like line 1's
+- a sparkline of its last 16 API calls, one cell per call: the colour pair
+  gives the 50k band (blue on black under 50k, then green on blue, yellow on
+  green, red on yellow, magenta on red, bright magenta on magenta, and solid
+  bright magenta from 300k), the height the position inside it
+
+No cost is shown: Claude Code reports none per agent. When the row is narrow,
+sparkline cells go first (oldest first), then the bar, then the labels. If the
+payload cannot be read, the script prints nothing and Claude Code keeps its
+default rows.
 
 ## Account badge (optional)
 
@@ -77,6 +107,7 @@ and writes nothing.
 
 ```
 statusline-command.sh        entry point (always exits 0)
+subagent-statusline.sh       agent-panel rows (subagentStatusLine; always exits 0)
 lib/                         rendering modules, sourced relative to the script
 test-statusline-helpers.sh   assert harness: bash test-statusline-helpers.sh
 statusline-design.md         living design doc

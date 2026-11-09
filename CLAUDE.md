@@ -7,15 +7,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `just test` — run the suite (`bash test-statusline-helpers.sh`). It is one
   flat script of `assert` calls under `## <section>` headings; there is no
   per-test filter. Grep the output for a section or `FAIL`.
-- `just lint` — `shellcheck -x` over the entry point, `lib/*.sh` and the tests.
+- `just lint` — `shellcheck -x` over both entry points, `lib/*.sh` and the tests.
 - `just precommit` — lint + test.
 - `just install` / `just uninstall` — symlink `~/.claude/statusline-command.sh`
-  to this checkout.
+  and `~/.claude/subagent-statusline.sh` to this checkout.
 - Manual render: pipe a payload into the script, isolated from the real home
   and cache, the same way the suite's `_sp_run` does:
   `printf '%s' '{"model":{"display_name":"Opus 4.8"}}' | HOME=$TMPDIR/h COLUMNS=200 CC_STATUSLINE_STATE_DIR=$TMPDIR/st bash statusline-command.sh`
   The last payload Claude Code sent is dumped to `statusbar.json` in the state
-  dir (for debugging only, never a data source).
+  dir (for debugging only, never a data source). The subagent renderer takes
+  the same isolation (`CC_STATUSLINE_STATE_DIR=$TMPDIR/st bash
+  subagent-statusline.sh < payload.json`) and dumps `subagent-payload.json`.
 
 ## Architecture
 
@@ -23,14 +25,24 @@ Plain bash, rendered by Claude Code on every redraw. `statusline-command.sh`
 reads the JSON payload from stdin, resolves its own directory through the
 `~/.claude` symlink (manual `readlink` walk, no `readlink -f`), sources
 `lib/*.sh` relative to it, then emits line 1 (identity + cost/context/timer,
-plus plan limits in plan mode), the account line in API mode, and an optional
+plus plan limits in plan mode; `$` is the payload's `cost.total_cost_usd`
+as-is, main-thread only — no cost is estimated), the account line in API mode, and an optional
 last line (`sparkline` per API call or `stats` per user turn, selected by
 `~/.claude/statusline-line2`).
+
+`subagent-statusline.sh` is a second entry point, for `subagentStatusLine`: it
+resolves its directory and sources `lib/` the same way, parses the panel payload
+(`columns`, `tasks[]`) in one `jq` fork, and writes one `{"id","content"}` JSON
+line per agent row, built by `lib/subagent-display.sh` (status, agent type,
+model/effort, context gauge, a sparkline of the agent's last 16 calls read from
+`<session>/subagents/agent-<id>.jsonl`). Any failure prints nothing, which keeps
+Claude Code's default rows. It runs every tick for every agent: assemble with
+the `_v` helpers (assign, don't `$( )`) and fit widths arithmetically.
 
 - **One payload fork.** Every payload field is extracted in a single `jq` call,
   joined by U+001F and split with `read`. Add new fields to that one call, not
   a new `jq` fork.
-- **Private state dir.** The payload dump, timing log and both caches live in
+- **Private state dir.** The payload dump, timing log and transcript cache live in
   `${CC_STATUSLINE_STATE_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/cc-statusline}`,
   resolved once per render by `cc_state_dir_init` (`lib/format-utils.sh`) into
   `CC_STATE_DIR`: created 0700, accepted only if owned by the user and not a
@@ -61,7 +73,9 @@ last line (`sparkline` per API call or `stats` per user turn, selected by
   `RESET_FG`, not `RESET` (which clears the dim for the rest of the line);
   only `lib/sparkline.sh` uses `RESET` on purpose. `BOLD` is
   `\033[22m\033[1m` because the CLI does not let bare `\033[1m` override dim.
-  16 base ANSI colours only (sole exception: `BRMAGENTA` in the context bar).
+  16 base ANSI colours only (sole exception: bright magenta, in the context bar
+  and the subagent sparkline's top bands). The subagent row never changes
+  intensity: its entry point binds `RESET_DIM` to `RESET_FG`.
 - **Defensive arithmetic:** validate every number (`^[0-9]+$`, not empty, not
   `unset`) before `$(( ))`; empty transcript values are normal.
 - **bash 3.2 compatible** (macOS `/bin/bash`): no `${var,,}`, associative

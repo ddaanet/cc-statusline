@@ -36,6 +36,20 @@ vislen() {
         | wc -c | tr -d ' '
 }
 
+# vislen without a fork, into the variable named $1: the same count (SGR
+# stripped, UTF-8 continuation bytes dropped) for callers that measure on every
+# row. Only SGR (`ESC [ … m`) is stripped, which is all the renderers emit.
+vislen_v() {
+    local LC_ALL=C s=$2 pre
+    while [[ "$s" == *$'\033['* ]]; do
+        pre=${s%%$'\033['*}
+        s=${s#*$'\033['}
+        s=$pre${s#*m}
+    done
+    s=${s//[$_VT_CONT]/}
+    printf -v "$1" '%d' "${#s}"
+}
+
 # The UTF-8 continuation bytes 0x80-0xBF, spelled out for vis_truncate. They are
 # matched as a bracket set of single bytes, not by value: bash 3.2's printf %d
 # on "'<byte>" returns a negative number for a byte above 0x7F, which classed every
@@ -150,6 +164,15 @@ kilos() {
         return
     fi
     local k_digits=$((width - 1))  # Reserve 1 char for 'k'
+    # An integer count is n/1000 rounded the way printf's %.0f rounds it (an
+    # exact .5 goes to the even neighbour), computed without forking bc: this
+    # runs once per row on every render.
+    if [[ "$1" =~ ^[0123456789]{1,18}$ ]]; then
+        local q=$(( 10#$1 / 1000 )) r=$(( 10#$1 % 1000 ))
+        (( r > 500 || (r == 500 && q % 2 == 1) )) && q=$(( q + 1 ))
+        printf "%${k_digits}dk" "$q"
+        return
+    fi
     printf "%${k_digits}.0fk" "$(bc -l <<< "$1 / 1000")"
 }
 
@@ -297,12 +320,13 @@ plan_pace_color() {
     fi
 }
 
-# Portable "size:mtime" signature (GNU stat, then BSD/macOS stat).
+# Portable "size:mtime" signature (GNU stat, then BSD/macOS stat), one stat
+# call for both fields. "0:0" when the file cannot be stat'ed.
 _stat_sig() {
-    local sz mt
-    sz=$(stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null)
-    mt=$(stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null)
-    printf '%s:%s' "${sz:-0}" "${mt:-0}"
+    local sig
+    sig=$(stat -c '%s:%Y' "$1" 2>/dev/null || stat -f '%z:%m' "$1" 2>/dev/null)
+    [[ "$sig" =~ ^[0123456789]+:[0123456789]+$ ]] || sig=0:0
+    printf '%s' "$sig"
 }
 
 # Byte size of a file (GNU stat, then BSD/macOS stat); 0 when unknown, so the
@@ -330,7 +354,7 @@ _cc_private_dir() {
 
 # cc_state_dir_init
 # Sets CC_STATE_DIR, once per render, to the private per-user state dir holding
-# the payload dump, the timing log and both caches (statusline-design.md §4.18):
+# the payload dumps, the timing log and the transcript cache (§4.18):
 # $CC_STATUSLINE_STATE_DIR, else $XDG_RUNTIME_DIR/cc-statusline, else
 # $HOME/.cache/cc-statusline (macOS has no XDG_RUNTIME_DIR). Set to empty when
 # that dir is unusable; every consumer then skips its write or computes

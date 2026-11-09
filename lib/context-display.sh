@@ -42,6 +42,20 @@ _token_bar_color() {
     printf -v "$1" '%s' "$_c"
 }
 
+# Visible width of display_token_bar's output for the same arguments, into the
+# variable named $1: one column per 50k range (capped at 32), 0 for an
+# empty/invalid/zero total, and the flat 8 of the elided form from 9 blocks up.
+# Lets a caller fit the bar arithmetically instead of measuring it.
+token_bar_width() {
+    local _tbw_n=0
+    if [[ "$2" =~ ^[0123456789]{1,18}$ ]]; then
+        _tbw_n=$(( (10#$2 + 49999) / 50000 ))
+        (( _tbw_n > 32 )) && _tbw_n=32
+        [[ "${3-}" == elide ]] && (( _tbw_n > 8 )) && _tbw_n=8
+    fi
+    printf -v "$1" '%d' "$_tbw_n"
+}
+
 # Display vertical-growth token bar
 # One char per 50k range, height shows fill within range (▁▂▃▄▅▆▇█)
 # Colors: blue green yellow red, then magenta/brmagenta alternating
@@ -102,7 +116,9 @@ display_token_bar() {
 # One pass over the transcript for both fields the line-1 fallbacks need
 # (cached via _tx_cached, see transcript-cache.sh). Emits two lines:
 #   1. timestamp of the last non-sidechain assistant entry ("" if none)
-#   2. total tokens of the last such entry with non-zero usage ("" if none)
+#   2. total tokens of the last such entry with non-zero usage ("" if none).
+#      A call that ran the advisor logs top-level usage summed over its
+#      `iterations`; its last `message` iteration is read instead (§4.19).
 # Scans the last 1500 lines and only falls back to the whole file when that
 # window holds neither, so a transcript tail of sidechain/tool noise still
 # resolves. $1 = transcript path.
@@ -112,8 +128,11 @@ _tx_last_jq() {
         reduce (inputs | select(.type == "assistant" and (.isSidechain // false | not))) as $e
             ({ts: "", tok: ""};
              ($e.timestamp // "") as $t |
-             ((($e.message.usage // {}) | (.input_tokens // 0) + (.cache_creation_input_tokens // 0) +
-               (.cache_read_input_tokens // 0) + (.output_tokens // 0))) as $n |
+             (($e.message.usage // {})
+              | ([.iterations // empty | arrays | .[] | objects | select(.type == "message")] | last) as $it
+              | ($it // .)
+              | (.input_tokens // 0) + (.cache_creation_input_tokens // 0) +
+                (.cache_read_input_tokens // 0) + (.output_tokens // 0)) as $n |
              (if $t != "" then .ts = $t else . end) |
              (if $n != 0 then .tok = ($n | tostring) else . end))
         | .ts, .tok'

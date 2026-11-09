@@ -51,12 +51,11 @@ fi
 source "$HERE/lib/account-display.sh" || { echo "FATAL: account-display.sh not found"; exit 2; }
 # shellcheck source=lib/line1-layout.sh
 source "$HERE/lib/line1-layout.sh" || { echo "FATAL: line1-layout.sh not found"; exit 2; }
-# shellcheck source=lib/subagent-cost.sh
-source "$HERE/lib/subagent-cost.sh" || { echo "FATAL: subagent-cost.sh not found"; exit 2; }
+# shellcheck source=lib/subagent-display.sh
+source "$HERE/lib/subagent-display.sh" || { echo "FATAL: subagent-display.sh not found"; exit 2; }
 
 # Sanity: confirm source worked
 type vis_truncate >/dev/null 2>&1 || { echo "FATAL: vis_truncate not loaded"; exit 2; }
-type model_price >/dev/null 2>&1 || { echo "FATAL: model_price not loaded"; exit 2; }
 type vislen      >/dev/null 2>&1 || { echo "FATAL: vislen not loaded"; exit 2; }
 type emit_truncated >/dev/null 2>&1 || { echo "FATAL: emit_truncated not loaded"; exit 2; }
 type display_turn_stats >/dev/null 2>&1 || { echo "FATAL: display_turn_stats not loaded"; exit 2; }
@@ -65,6 +64,7 @@ type layout_line1 >/dev/null 2>&1 || { echo "FATAL: layout_line1 not loaded"; ex
 type render_timer >/dev/null 2>&1 || { echo "FATAL: render_timer not loaded"; exit 2; }
 type render_model_sec >/dev/null 2>&1 || { echo "FATAL: render_model_sec not loaded"; exit 2; }
 type set_model_sec >/dev/null 2>&1 || { echo "FATAL: set_model_sec not loaded"; exit 2; }
+type sa_row >/dev/null 2>&1 || { echo "FATAL: sa_row not loaded"; exit 2; }
 
 cc_state_dir_init
 
@@ -963,101 +963,6 @@ _L1_reset; L1_R1=13 L1_RC=4
 # layout row1="IDFULL CGBAR " (13, fits R1); planrow "PLANROW " (8) → truncated to 4 = "PLA…"
 assert "emit truncates continuation to RC" "$(emit_line1)" $'IDFULL CGBAR \nPLA\xe2\x80\xa6'
 
-echo "## model_price"
-assert "opus 4.8 → 5/25"    "$(model_price "claude-opus-4-8")"          "5 25"
-assert "opus 4.5 → 15/75"   "$(model_price "claude-opus-4-5-20251101")" "15 75"
-assert "sonnet → 3/15"      "$(model_price "claude-sonnet-4-5-20250929")" "3 15"
-assert "haiku → 0.8/4"      "$(model_price "claude-haiku-4-5-20251001")"  "0.8 4"
-assert "unknown → default"  "$(model_price "gpt-something")"            "3 15"
-
-echo "## subagent_cost"
-type subagent_cost >/dev/null 2>&1 || { echo "FATAL: subagent_cost not loaded"; exit 2; }
-
-# Fixture: one haiku subagent, streaming duplicates of a single message.id.
-# The two entries share id m1; dedup keeps the max-output one. The cost
-# derivation is worked out below the fixture (right before the assertion).
-_sc_fix=$(mktemp "$TEST_TMP/agent-x.XXXXXX")
-cat > "$_sc_fix" <<'JSONL'
-{"type":"assistant","isSidechain":true,"message":{"id":"m1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":18887,"cache_creation":{"ephemeral_5m_input_tokens":18887,"ephemeral_1h_input_tokens":0}}}}
-{"type":"assistant","isSidechain":true,"message":{"id":"m1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":10,"output_tokens":300,"cache_read_input_tokens":0,"cache_creation_input_tokens":18887,"cache_creation":{"ephemeral_5m_input_tokens":18887,"ephemeral_1h_input_tokens":0}}}}
-JSONL
-# Deduped (max output=300): in=10,out=300,c5=18887.
-# cost = (10 + 18887*1.25)*0.8/1e6 + 300*4/1e6
-#      = (10 + 23608.75)*0.8/1e6 + 1200/1e6
-#      = 23618.75*0.8/1e6 + 0.0012 = 18895.0/1e6 + 0.0012 = 0.018895 + 0.0012 = 0.020095
-assert "one haiku subagent, deduped" "$(subagent_cost "$_sc_fix")" "0.020095"
-assert "missing file → 0"            "$(subagent_cost "/no/such/file")" "0"
-rm -f "$_sc_fix"
-
-echo "## session_subagent_cost"
-type session_subagent_cost >/dev/null 2>&1 || { echo "FATAL: session_subagent_cost not loaded"; exit 2; }
-
-# Build <dir>/<session>.jsonl + <dir>/<session>/subagents/agent-*.jsonl
-_ss_dir=$(mktemp -d "$TEST_TMP/ss.XXXXXX")
-: > "$_ss_dir/sess.jsonl"
-mkdir -p "$_ss_dir/sess/subagents"
-# agent 1: haiku, deduped in=10 out=300 c5=18887 → 0.020095 (from Task 6)
-cat > "$_ss_dir/sess/subagents/agent-1.jsonl" <<'JSONL'
-{"type":"assistant","isSidechain":true,"message":{"id":"m1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":10,"output_tokens":300,"cache_read_input_tokens":0,"cache_creation_input_tokens":18887,"cache_creation":{"ephemeral_5m_input_tokens":18887,"ephemeral_1h_input_tokens":0}}}}
-JSONL
-# agent 2: sonnet, in=0 out=1000 cr=100000 → (100000*0.1)*3/1e6 + 1000*15/1e6
-#   = 10000*3/1e6 + 0.015 = 0.03 + 0.015 = 0.045
-cat > "$_ss_dir/sess/subagents/agent-2.jsonl" <<'JSONL'
-{"type":"assistant","isSidechain":true,"message":{"id":"n1","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":0,"output_tokens":1000,"cache_read_input_tokens":100000,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}}}}
-JSONL
-# total = 0.020095 + 0.045000 = 0.065095
-assert "sums both subagents" "$(session_subagent_cost "$_ss_dir/sess.jsonl")" "0.065095"
-
-# No subagents dir → 0
-: > "$_ss_dir/lonely.jsonl"
-assert "no subagents dir → 0" "$(session_subagent_cost "$_ss_dir/lonely.jsonl")" "0"
-rm -rf "$_ss_dir"
-
-echo "## _cached_subagent_cost anchoring"
-type _cached_subagent_cost >/dev/null 2>&1 || { echo "FATAL: _cached_subagent_cost not loaded"; exit 2; }
-
-# Regression: an unanchored `grep -F "$key"` false-hits when a poisoned cache
-# line's key has this file's key as a strict SUFFIX (e.g. a different path
-# ending in the same tail). Prove the lookup is anchored to an exact
-# first-field match instead.
-_cac_fix=$(mktemp "$TEST_TMP/agent-x.XXXXXX")
-cat > "$_cac_fix" <<'JSONL'
-{"type":"assistant","isSidechain":true,"message":{"id":"m1","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":10,"output_tokens":300,"cache_read_input_tokens":0,"cache_creation_input_tokens":18887,"cache_creation":{"ephemeral_5m_input_tokens":18887,"ephemeral_1h_input_tokens":0}}}}
-JSONL
-_cac_key="$_cac_fix:$(_stat_sig "$_cac_fix")"
-_sc_cache="$_st_dir/subagent-cost-cache"
-mkdir -p "$_st_dir"
-printf '%s\t%s\n' "/POISON$_cac_key" "9.999999" >> "$_sc_cache"
-assert "cache lookup not fooled by suffix key" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
-
-echo "## _cached_subagent_cost in the private state dir"
-rm -f "$_sc_cache"
-_cached_subagent_cost "$_cac_fix" >/dev/null
-assert "miss is recorded in the state dir" \
-    "$(grep -cxF "$_cac_key"$'\t'"0.020095" "$_sc_cache" 2>/dev/null)" "1"
-# A planted well-formed value is returned, so the lookups below read this file.
-printf '%s\t%s\n' "$_cac_key" "0.123456" > "$_sc_cache"
-assert "well-formed hit is returned" "$(_cached_subagent_cost "$_cac_fix")" "0.123456"
-printf '%s\t%s\n' "$_cac_key" "0" > "$_sc_cache"
-assert "bare 0 hit (empty transcript) is returned" "$(_cached_subagent_cost "$_cac_fix")" "0"
-# shellcheck disable=SC2016  # literal $( ) is the payload
-for _sc_bad in '9.9e9' '$(x)' '1.5' '-0.123456' '0.1234567' '00.123456' ' 0.123456' '0.123456 '; do
-    printf '%s\t%s\n' "$_cac_key" "$_sc_bad" > "$_sc_cache"
-    assert "malformed hit '$_sc_bad' is a miss" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
-done
-# Append-only cache: past its size bound it is dropped and started over.
-{ for _sc_i in $(seq 1 8000); do printf '/junk/agent-%04d.jsonl:100:%d\t0.000001\n' "$_sc_i" "$_sc_i"; done
-  printf '%s\t%s\n' "$_cac_key" "0.123456"; } > "$_sc_cache"
-assert "oversized cache is a miss" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
-assert "oversized cache is started over" "$(wc -l < "$_sc_cache" | tr -d ' ')" "1"
-printf 'ORIG' > "$TEST_TMP/sc-victim"; rm -f "$_sc_cache"; ln -s "$TEST_TMP/sc-victim" "$_sc_cache"
-assert "planted cache link: computed" "$(_cached_subagent_cost "$_cac_fix")" "0.020095"
-assert "planted cache link: target untouched" "$(cat "$TEST_TMP/sc-victim")" "ORIG"
-rm -f "$_sc_cache"
-assert "no state dir: computed, uncached" \
-    "$(CC_STATE_DIR='' _cached_subagent_cost "$_cac_fix" 2>&1)" "0.020095"
-rm -f "$_cac_fix"
-
 echo "## _tx_cached"
 _tc_dir="$TEST_TMP/txc"; TX_CACHE_DIR="$_tc_dir"
 _tc_tx="$TEST_TMP/tx-a.jsonl"; _tc_cnt="$TEST_TMP/tx-count"
@@ -1139,6 +1044,14 @@ _tw="$TEST_TMP/window.jsonl"
 { printf '{"type":"assistant","timestamp":"2026-01-02T00:00:00.000Z","message":{"usage":{"output_tokens":7}}}\n'
   for _i in $(seq 1 1600); do printf '{"type":"user","message":{"content":"x"}}\n'; done; } > "$_tw"
 assert "full-file fallback when tail window empty" "$(get_transcript_context "$_tw")" "7"
+# A call that ran the advisor logs top-level usage summed over its iterations:
+# the context is the last `message` iteration (2+155+154816+2518), not the sum.
+_ti="$TEST_TMP/iter.jsonl"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-01-03T00:00:00.000Z","message":{"usage":{"input_tokens":4,"cache_read_input_tokens":299452,"cache_creation_input_tokens":12698,"output_tokens":342,"iterations":[{"type":"message","input_tokens":2,"output_tokens":187,"cache_read_input_tokens":144636,"cache_creation_input_tokens":10180},{"type":"advisor_message","input_tokens":146951,"output_tokens":14732},{"type":"message","input_tokens":2,"output_tokens":155,"cache_read_input_tokens":154816,"cache_creation_input_tokens":2518}]}}}' > "$_ti"
+assert "advisor call: last message iteration, not the summed usage" "$(get_transcript_context "$_ti")" "157491"
+_te="$TEST_TMP/iter-empty.jsonl"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-01-03T00:00:00.000Z","message":{"usage":{"input_tokens":1,"cache_read_input_tokens":2,"cache_creation_input_tokens":3,"output_tokens":4,"iterations":[]}}}' > "$_te"
+assert "empty iterations: top-level usage" "$(get_transcript_context "$_te")" "10"
 unset TX_CACHE_DIR
 
 echo "## planted cache bodies are rejected, never evaluated"
@@ -1381,6 +1294,216 @@ assert "symlinked override with trailing slashes refused" \
     "$(CC_STATUSLINE_STATE_DIR="$TEST_TMP/st-link//" cc_state_dir_init; echo "${CC_STATE_DIR:-none}")" "none"
 assert "trailing slash on a good override is dropped" \
     "$(CC_STATUSLINE_STATE_DIR="$_st_good/" cc_state_dir_init; echo "${CC_STATE_DIR:-none}")" "$_st_good"
+
+echo "## kilos: integer path matches printf %.0f of n/1000"
+_kl=ok
+for _kl_v in 1000 1499 1500 2500 3500 9999 59714 116499 116500 117500 202467 999499 999500 1000000 1234567; do
+    _kl_want=$(printf '%2.0fk' "$(bc -l <<< "$_kl_v / 1000")")
+    [[ "$(kilos "$_kl_v" 3)" == "$_kl_want" ]] || _kl="$_kl_v: $(kilos "$_kl_v" 3) ≠ $_kl_want"
+done
+assert "same text as the bc path, ties to even" "$_kl" "ok"
+assert "below 1000 unchanged" "$(kilos 999 3)|$(kilos 0 3)|$(kilos '' 3)" "999|  0| - "
+
+echo "## _stat_sig"
+printf 'abcde' > "$TEST_TMP/sig-file"
+assert "size:mtime of a file" "$(_stat_sig "$TEST_TMP/sig-file")" "5:$(stat -c %Y "$TEST_TMP/sig-file" 2>/dev/null || stat -f %m "$TEST_TMP/sig-file")"
+assert "missing file → 0:0" "$(_stat_sig "$TEST_TMP/no-such-file")" "0:0"
+
+echo "## vislen_v counts what vislen counts"
+_vlv=ok _vlv_n=
+for _vlv_s in "" "abc" "${RED}ab${RESET}c" $'\033[38;5;12m❶\033[0m x' "𝐀b…" $'\033[49m\033[39m' "a${BOLD}m${RESET}m" "⛁ 117k ██▃"; do
+    vislen_v _vlv_n "$_vlv_s"
+    [[ "$_vlv_n" == "$(vislen "$_vlv_s")" ]] || _vlv="$(printf '%q' "$_vlv_s") → $_vlv_n"
+done
+assert "same width on plain, SGR-laden and multibyte strings" "$_vlv" "ok"
+
+echo "## token_bar_width matches display_token_bar"
+_tbw=ok _tbw_w=
+for _tbw_v in 0 1 49999 50000 50001 116800 400000 400001 1000000 1600000 5000000 '' x; do
+    for _tbw_m in '' elide; do
+        token_bar_width _tbw_w "$_tbw_v" $_tbw_m
+        [[ "$_tbw_w" == "$(vislen "$(display_token_bar "$_tbw_v" $_tbw_m)")" ]] || _tbw="$_tbw_v $_tbw_m"
+    done
+done
+assert "width equals the rendered bar's" "$_tbw" "ok"
+
+echo "## subagent row: model id → display name"
+assert "opus id"                 "$(sa_model_name claude-opus-5-5)"            "Opus 5.5"
+assert "fable id"                "$(sa_model_name claude-fable-5-1)"           "Fable 5.1"
+assert "date-suffixed sonnet id" "$(sa_model_name claude-sonnet-4-5-20250929)" "Sonnet 4.5"
+assert "haiku id"                "$(sa_model_name claude-haiku-4-5-20251001)"  "Haiku 4.5"
+assert "context-window suffix"   "$(sa_model_name 'claude-opus-4-8[1m]')"      "Opus 4.8"
+assert "major-only id"           "$(sa_model_name claude-opus-5)"              "Opus 5"
+assert "old version-first id"    "$(sa_model_name claude-3-5-sonnet-20241022)" "Sonnet 3.5"
+assert "unknown shape passes through" "$(sa_model_name gpt-something)"         "gpt-something"
+assert "empty → empty"           "$(sa_model_name '')"                         ""
+
+echo "## subagent row: sparkline cell bands and heights"
+_sa_c() { _sa_cell "$1"; printf '%q|%q|%s' "$_SA_CELL_BG" "$_SA_CELL_FG" "$_SA_CELL_GLYPH"; }
+_sa_w() { printf '%q|%q|%s' "$1" "$2" "$3"; }
+assert "0 → blue on black, lowest"   "$(_sa_c 0)"      "$(_sa_w $'\033[40m' $'\033[34m' ▁)"
+assert "6249 still lowest step"      "$(_sa_c 6249)"   "$(_sa_w $'\033[40m' $'\033[34m' ▁)"
+assert "6250 second step"            "$(_sa_c 6250)"   "$(_sa_w $'\033[40m' $'\033[34m' ▂)"
+assert "25000 fifth step"            "$(_sa_c 25000)"  "$(_sa_w $'\033[40m' $'\033[34m' ▅)"
+assert "49999 full block in band 0"  "$(_sa_c 49999)"  "$(_sa_w $'\033[40m' $'\033[34m' █)"
+assert "50000 green on blue"         "$(_sa_c 50000)"  "$(_sa_w $'\033[44m' $'\033[32m' ▁)"
+assert "100000 yellow on green"      "$(_sa_c 100000)" "$(_sa_w $'\033[42m' $'\033[33m' ▁)"
+assert "175000 red on yellow"        "$(_sa_c 175000)" "$(_sa_w $'\033[43m' $'\033[31m' ▅)"
+assert "200000 magenta on red"       "$(_sa_c 200000)" "$(_sa_w $'\033[41m' $'\033[35m' ▁)"
+assert "299999 brmagenta on magenta" "$(_sa_c 299999)" "$(_sa_w $'\033[45m' $'\033[95m' █)"
+assert "300000 solid brmagenta"      "$(_sa_c 300000)" "$(_sa_w $'\033[105m' $'\033[95m' █)"
+assert "2000000 still solid"         "$(_sa_c 2000000)" "$(_sa_w $'\033[105m' $'\033[95m' █)"
+# shellcheck disable=SC2016  # literal $( ) is the payload
+assert "non-numeric → no cell"       "$(_sa_c 'a[$(x)]')" "$(_sa_w '' '' '')"
+
+echo "## subagent row: sparkline run"
+assert "colours emitted on change only, reset after" \
+    "$(sa_sparkline 0 1000 50000 56249)" \
+    $'\033[40m\033[34m▁▁\033[44m\033[32m▁▁\033[49m\033[39m'
+assert "no values → nothing" "$(sa_sparkline)" ""
+
+echo "## subagent row: status"
+assert "running: cyan play + elapsed" "$(sa_status_sec running 252)" "${CYAN}▶ 4m12${RESET_FG}"
+assert "completed: green check"       "$(sa_status_sec completed '')" "${GREEN}✔${RESET_FG}"
+assert "failed: red cross"            "$(sa_status_sec failed '')"    "${RED}✘${RESET_FG}"
+assert "killed: yellow square"        "$(sa_status_sec killed '')"    "${YELLOW}■${RESET_FG}"
+assert "unknown status: plain ?"      "$(sa_status_sec paused '')"    "?"
+assert "running without elapsed"      "$(sa_status_sec running '')"   "${CYAN}▶${RESET_FG}"
+
+echo "## subagent row: label"
+assert "type only"     "$(sa_label '' general-purpose)"   "general-purpose"
+assert "name and type" "$(sa_label scout Explore)"        "scout (Explore)"
+assert "name only"     "$(sa_label scout '')"             "scout"
+assert "neither"       "$(sa_label '' '')"                ""
+
+echo "## subagent row: assembly and width"
+_sa_strip() { printf '%s' "$1" | sed $'s/\x1b\\[[0-9;]*m//g'; }
+_sa_ic=$'\xef\x87\x80'
+_sa_st=$(sa_status_sec running 252)
+# Eight old lowest-step cells, then eight new full ones: a cut that keeps the
+# newest shows only █.
+_sa_cells=(0 0 0 0 0 0 0 0 49999 49999 49999 49999 49999 49999 49999 49999)
+_sa_r() { sa_row "$1" "$_sa_st" general-purpose claude-opus-5-5 high 116800 "${_sa_cells[@]}"; }
+_sa_pre="▶ 4m12  general-purpose  ❷ Opus ● high  $_sa_ic 117k"
+assert "wide: every element, all 16 cells" "$(_sa_strip "$(_sa_r 200)")" "$_sa_pre ██▃  ▁▁▁▁▁▁▁▁████████"
+assert "60 cols: oldest cells dropped first" "$(_sa_strip "$(_sa_r 60)")" "$_sa_pre ██▃  ████████"
+assert "53 cols: one newest cell"            "$(_sa_strip "$(_sa_r 53)")" "$_sa_pre ██▃  █"
+assert "52 cols: no room, sparkline gone"    "$(_sa_strip "$(_sa_r 52)")" "$_sa_pre ██▃"
+assert "49 cols: then the bar"               "$(_sa_strip "$(_sa_r 49)")" "$_sa_pre"
+assert "45 cols: then the model/effort labels" "$(_sa_strip "$(_sa_r 45)")" "▶ 4m12  general-purpose  ❷ ●  $_sa_ic 117k"
+assert "30 cols: then the agent label is cut" "$(_sa_strip "$(_sa_r 30)")" "▶ 4m12  general-…  ❷ ●  $_sa_ic 117k"
+assert "20 cols: agent label dropped"         "$(_sa_strip "$(_sa_r 20)")" "▶ 4m12  ❷ ●  $_sa_ic 117k"
+_sa_fit=ok
+for _sa_cols in 1 5 10 15 20 24 30 40 45 50 52 53 60 68 80; do
+    _sa_wd=$(vislen "$(_sa_r "$_sa_cols")")
+    (( _sa_wd <= _sa_cols )) || _sa_fit="$_sa_cols cols → $_sa_wd"
+done
+assert "never wider than columns" "$_sa_fit" "ok"
+assert "1M context: bar elided before it is dropped" \
+    "$(_sa_strip "$(sa_row 57 "$_sa_st" general-purpose claude-opus-5-5 high 1000000 "${_sa_cells[@]}")")" \
+    "▶ 4m12  general-purpose  ❷ Opus ● high  $_sa_ic 1000k █████⋯██"
+assert "no model, effort, tokens or cells" "$(_sa_strip "$(sa_row 80 "$_sa_st" general-purpose '' '' '')")" "▶ 4m12  general-purpose"
+assert "numeric effort budget is omitted" \
+    "$(_sa_strip "$(sa_row 80 "$_sa_st" '' claude-sonnet-5-5 16000 5000)")" "▶ 4m12  ❸ Sonnet  $_sa_ic  5k ▁"
+assert "gauge uses the line-1 value colour" \
+    "$([[ "$(sa_row 80 "$_sa_st" x '' '' 116800)" == *"${YELLOW}${_sa_ic} 117k"* ]] && echo yes)" "yes"
+
+echo "## subagent transcript: per-call context sizes"
+_sa_dir="$TEST_TMP/sa"; mkdir -p "$_sa_dir/sess/subagents"; : > "$_sa_dir/sess.jsonl"
+_sa_tx="$_sa_dir/sess/subagents/agent-a1b2.jsonl"
+_sa_u() { # id in cr cc out
+    printf '{"type":"assistant","isSidechain":true,"message":{"id":"%s","usage":{"input_tokens":%d,"cache_read_input_tokens":%d,"cache_creation_input_tokens":%d,"output_tokens":%d}}}\n' "$@"
+}
+{
+    printf '{"type":"user","message":{"content":"go"}}\n'
+    for _sa_i in $(seq 1 18); do
+        # Streaming writes the same message twice; the second entry is the final one.
+        _sa_u "m$_sa_i" 1 $(( _sa_i * 1000 )) 10 5
+        printf '{"type":"user","message":{"content":[{"type":"tool_result"}]}}\n'
+        _sa_u "m$_sa_i" 1 $(( _sa_i * 1000 )) 10 50
+    done
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":9}}}\n'   # no id: ignored
+    printf '{"type":"assistant","message":{"id":"half'                       # torn last line
+} > "$_sa_tx"
+# Calls 3..18, oldest first: 1 + i*1000 + 10 + 50.
+_sa_want=$(for _sa_i in $(seq 3 18); do printf '%d\n' $(( _sa_i * 1000 + 61 )); done)
+TX_CACHE_DIR="$TEST_TMP/txc-sa"
+assert "last 16 calls, deduped, oldest first" "$(sa_agent_calls "$_sa_dir/sess.jsonl" a1b2)" "$_sa_want"
+assert "real producer body passes the validator" "$(_tx_body_ok subcalls "$(_tx_cached subcalls "$_sa_tx" _sa_calls_jq)" && echo ok)" "ok"
+assert "missing agent transcript → nothing" "$(sa_agent_calls "$_sa_dir/sess.jsonl" nope)" ""
+# A call that ran a server-side tool (the advisor) logs top-level usage summed
+# over its iterations; its context is the last model iteration's, not the sum.
+_sa_itx="$_sa_dir/sess/subagents/agent-iter.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"it1","usage":{"input_tokens":4,"cache_read_input_tokens":299452,"cache_creation_input_tokens":12698,"output_tokens":342,"iterations":[{"type":"message","input_tokens":2,"output_tokens":187,"cache_read_input_tokens":144636,"cache_creation_input_tokens":10180},{"type":"advisor_message","input_tokens":146951,"output_tokens":14732,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},{"type":"message","input_tokens":2,"output_tokens":155,"cache_read_input_tokens":154816,"cache_creation_input_tokens":2518}]}}}' \
+    '{"type":"assistant","message":{"id":"it2","usage":{"input_tokens":1,"cache_read_input_tokens":2,"cache_creation_input_tokens":3,"output_tokens":4,"iterations":[]}}}' > "$_sa_itx"
+assert "server-tool call: last model iteration's context" "$(sa_agent_calls "$_sa_dir/sess.jsonl" iter)" $'157491\n10'
+# agent-x/ exists, so x/../agent-a1b2 resolves to a real transcript: only the id
+# check stands between it and a read.
+mkdir -p "$_sa_dir/sess/subagents/agent-x"
+assert "fixture: traversal path resolves" "$([[ -f "$_sa_dir/sess/subagents/agent-x/../agent-a1b2.jsonl" ]] && echo yes)" "yes"
+assert "id with a path separator → nothing" "$(sa_agent_calls "$_sa_dir/sess.jsonl" 'x/../agent-a1b2')" ""
+assert "no transcript path → nothing" "$(sa_agent_calls '' a1b2)" ""
+_sa_plant() { mkdir -p "$TX_CACHE_DIR"; { printf '%s\n' "$(_stat_sig "$_sa_tx")"; printf '%s' "$1"; } > "$TX_CACHE_DIR/${_sa_tx//\//_}.subcalls"; }
+_sa_plant $'7\n8\n'
+assert "well-formed planted body is read back" "$(sa_agent_calls "$_sa_dir/sess.jsonl" a1b2)" $'7\n8'
+# shellcheck disable=SC2016  # literal $( ) is the payload
+_sa_plant 'PASS[$(touch${IFS}'"$TEST_TMP/sa-pwned"')]'$'\n'
+assert "planted expression is a miss" "$(sa_agent_calls "$_sa_dir/sess.jsonl" a1b2)" "$_sa_want"
+assert "17 lines is a miss" "$(_tx_body_ok subcalls "$(seq 1 17)"$'\n' && echo ok || echo bad)" "bad"
+assert "16 lines is accepted" "$(_tx_body_ok subcalls "$(seq 1 16)"$'\n' && echo ok || echo bad)" "ok"
+assert "leading zero is a miss" "$(_tx_body_ok subcalls $'07\n' && echo ok || echo bad)" "bad"
+assert "empty body is accepted" "$(_tx_body_ok subcalls '' && echo ok || echo bad)" "ok"
+unset TX_CACHE_DIR
+
+echo "## subagent-statusline.sh end to end"
+_sa_now_ms=$(( $(date +%s) * 1000 ))
+# Sanitized from a real capture (subagent-payload.json): session id and paths
+# replaced, a named failed task and an effort added to cover those fields.
+_sa_payload=$(jq -c --arg tp "$_sa_dir/sess.jsonl" --argjson st $(( _sa_now_ms - 125000 )) \
+    '.transcript_path = $tp | .tasks[0].startTime = $st' <<'JSON'
+{"session_id":"00000000-0000-0000-0000-000000000000","transcript_path":"","cwd":"/work/repo","prompt_id":"11111111-1111-1111-1111-111111111111","columns":95,"tasks":[
+ {"id":"a1b2","type":"local_agent","agentType":"general-purpose","status":"running","description":"Remove cost estimate, build agent rows","label":"Editing CLAUDE.md","startTime":0,"model":"claude-opus-5-5","contextWindowSize":1000000,"tokenCount":116800,"tokenSamples":[94248,99361,110659,116800],"cwd":"/work/repo"},
+ {"id":"c3d4","type":"local_agent","agentType":"general-purpose","status":"completed","description":"Survey","label":"Survey","startTime":1794003820486,"model":"claude-sonnet-5-5","contextWindowSize":1000000,"tokenCount":59714,"tokenSamples":[59714],"cwd":"/work/repo"},
+ {"id":"e5f6","name":"scout","type":"local_agent","agentType":"Explore","status":"failed","description":"Look around","label":"Look around","startTime":1794003820486,"effort":"high","tokenCount":0,"tokenSamples":[],"cwd":"/work/repo"}]}
+JSON
+)
+_sa_state="$TEST_TMP/sa-state"
+_sa_run() { # $1=stdin → stdout; stderr discarded, exit status appended as "rc=N"
+    local out rc
+    out=$(printf '%s' "$1" | HOME="$_sp_home" CC_STATUSLINE_STATE_DIR="$_sa_state" \
+        TX_CACHE_DIR="$TEST_TMP/txc-sa2" bash "$HERE/subagent-statusline.sh" 2>/dev/null)
+    rc=$?
+    printf '%s\nrc=%d' "$out" "$rc"
+}
+_sa_out=$(_sa_run "$_sa_payload")
+assert "one JSON line per task, ids echoed in order, exit 0" \
+    "$(printf '%s\n' "$_sa_out" | sed '$d' | jq -r .id 2>&1 | paste -sd, -)|${_sa_out##*$'\n'}" "a1b2,c3d4,e5f6|rc=0"
+_sa_rows=$(printf '%s\n' "$_sa_out" | sed '$d' | jq -r .content 2>/dev/null)
+_sa_r1=$(_sa_strip "$(sed -n 1p <<< "$_sa_rows")")
+assert "running row: status, type, model, gauge, sparkline" \
+    "$([[ "$_sa_r1" =~ ^▶\ 2m0[456]\ \ general-purpose\ \ ❷\ Opus\ \ $_sa_ic\ 117k\ ██▃\ \ ▁▁▁▁▂▂▂▂▂▂▃▃▃▃▃▃$ ]] && echo yes || printf '%q' "$_sa_r1")" "yes"
+assert "completed row without a transcript: no sparkline" \
+    "$(_sa_strip "$(sed -n 2p <<< "$_sa_rows")")" "✔  general-purpose  ❸ Sonnet  $_sa_ic 60k █▂"
+assert "failed row: name, effort, zero gauge" \
+    "$(_sa_strip "$(sed -n 3p <<< "$_sa_rows")")" "✘  scout (Explore)  ● high  $_sa_ic   0"
+_sa_wide=ok
+while IFS= read -r _sa_line; do
+    (( $(vislen "$_sa_line") <= 95 )) || _sa_wide=$(vislen "$_sa_line")
+done <<< "$_sa_rows"
+assert "rows fit the payload's columns" "$_sa_wide" "ok"
+assert "rows never change intensity (panel dim state unknown)" \
+    "$([[ "$_sa_rows" == *$'\033[2m'* || "$_sa_rows" == *$'\033[22m'* || "$_sa_rows" == *$'\033[0m'* ]] && echo touched || echo clean)" "clean"
+assert "payload dumped to the state dir" "$(cat "$_sa_state/subagent-payload.json" 2>/dev/null)" "$_sa_payload"
+_sa_narrow=$(_sa_run "$(jq -c '.columns = 30' <<< "$_sa_payload")")
+_sa_nw=ok
+while IFS= read -r _sa_line; do
+    (( $(vislen "$_sa_line") <= 30 )) || _sa_nw=$(vislen "$_sa_line")
+done <<< "$(printf '%s\n' "$_sa_narrow" | sed '$d' | jq -r .content 2>/dev/null)"
+assert "30 columns: rows still fit" "$_sa_nw" "ok"
+assert "garbage stdin: no output, exit 0" "$(_sa_run 'not json {')" $'\nrc=0'
+assert "empty stdin: no output, exit 0"   "$(_sa_run '')" $'\nrc=0'
+assert "no tasks: no output, exit 0"      "$(_sa_run '{"tasks":[]}')" $'\nrc=0'
+assert "tasks not an array: no output, exit 0" "$(_sa_run '{"tasks":"x"}')" $'\nrc=0'
 
 echo
 if (( FAIL == 0 )); then

@@ -4,8 +4,9 @@
 whenever behaviour changes; do not flatten decisions into summaries — the
 rationale is the point.
 
-**Scope**: `statusline-command.sh` and `lib/*.sh` in this repository — everything
-Claude Code renders below the prompt. Account switching itself is in
+**Scope**: `statusline-command.sh`, `subagent-statusline.sh` and `lib/*.sh` in
+this repository — everything Claude Code renders below the prompt, including the
+agent panel's subagent rows. Account switching itself is in
 [`account-switcher-design.md`](account-switcher-design.md); the statusline only
 *reads* the mode it publishes.
 
@@ -28,7 +29,7 @@ window has the field.
 
 **FR4 — API-mode usage.** Token counts instead of limits:
 `💳 API 240k today | 1.2M week`, sourced from `stats-cache.json`. Cost
-estimation is deliberately not shown (§4.13).
+estimation is deliberately not shown (§5, "Estimating subagent cost").
 
 **FR5 — Identity group.** The head of line 1 answers "what am I talking to right
 now": model rank glyph + name, reasoning effort, output style, fast mode, and a
@@ -42,7 +43,8 @@ elides to glyphs as the terminal narrows (§4.17).
 growth bar, reflecting *current* context occupancy (not cumulative session
 totals).
 
-**FR7 — Cost.** Session cost including subagents.
+**FR7 — Cost.** `$` is the payload's `cost.total_cost_usd` as Claude Code
+reports it: main-thread only, with nothing estimated or added for subagents.
 
 **FR8 — Selectable second line.** `~/.claude/statusline-line2` selects
 `sparkline` (default) or `stats`.
@@ -61,6 +63,12 @@ truncates from the left (oldest first).
 **FR12 — Idle behaviour.** When the session is idle the sparkline is suppressed
 by default; opt out with the flag file `~/.claude/sparkline-always-on`.
 
+**FR13 — Subagent rows.** `subagent-statusline.sh` renders each row of the agent
+panel (`subagentStatusLine`): status glyph and running time, agent type (and
+name), model and effort, the agent's context value and growth bar, and a
+sparkline of its last 16 API calls' context sizes, fitted to the payload's
+`columns` (§4.19).
+
 ---
 
 ## 2. Non-Functional Requirements
@@ -71,11 +79,12 @@ by default; opt out with the flag file `~/.claude/sparkline-always-on`.
 thinking was disabled, and that propagated to the script exit. The function was
 deleted in `63e54a8` — thinking state now comes from the payload, §4.17 — but
 the failure mode it illustrates applies to any helper whose last command is a
-test.)
+test.) `subagent-statusline.sh` is held to the same rule, and on any failure it
+prints nothing, which keeps Claude Code's default row for every agent.
 
 **NFR2 — Cheap on every render.** The script runs on every redraw. Prefer
-payload fields over file parsing; cache derived work (subagent cost and the
-transcript-derived streams are cached by file size + mtime, §4.18). The payload
+payload fields over file parsing; cache derived work (the transcript-derived
+streams are cached by file size + mtime, §4.18). The payload
 is read in a single `jq` fork, and a render over an unchanged transcript forks
 `jq` once.
 
@@ -98,12 +107,17 @@ get a fixture there.
 
 **NFR7 — Theme-neutral colours.** 16-colour ANSI base colours only, no bright
 variants: GREEN = input/additions, YELLOW = output, CYAN = cached/timing,
-RED = deletions. One deliberate exception: `BRMAGENTA` alternates with `MAGENTA`
-in the context growth bar past 250k, and colours that bar's elision `⋯` (§4.12).
-It carries no meaning of its own — it only makes block boundaries countable — so
-a theme where the two are indistinguishable degrades to the pre-2026-07-30 flat
-magenta run without losing information. The `⋯` survives such a theme too: it is
-distinguishable from the blocks around it by shape, not by colour.
+RED = deletions. One deliberate exception: bright magenta. `BRMAGENTA` alternates
+with `MAGENTA` in the context growth bar past 250k, and colours that bar's elision
+`⋯` (§4.12). It carries no meaning of its own — it only makes block boundaries
+countable — so a theme where the two are indistinguishable degrades to the
+pre-2026-07-30 flat magenta run without losing information. The `⋯` survives
+such a theme too: it is distinguishable from the blocks around it by shape, not
+by colour. The subagent sparkline (§4.19) uses the same colour for its two top
+bands: bright magenta on magenta for 250–300k, and a solid bright-magenta block
+(fg and bg `95`/`105`) for 300k and up. There too the value is also carried by
+the cell's height, so a theme that merges the two colours loses only the line
+between a full 250–300k cell and a 300k+ one.
 
 ---
 
@@ -117,16 +131,17 @@ distinguishable from the blocks around it by shape, not by colour.
 | `lib/line1-layout.sh` | Pure layout engine: `layout_line1` / `emit_line1` |
 | `lib/model-display.sh` | Pure identity group: `render_model_sec` / `set_model_sec` |
 | `lib/account-display.sh` | Account badge, plan/API section, timer |
-| `lib/context-display.sh` | Context value, colour gradient, growth bar |
+| `lib/context-display.sh` | Context value, colour gradient, growth bar and its width (`token_bar_width`) |
 | `lib/sparkline.sh` | Per-API-call sparkline (line 2, `sparkline` mode) |
 | `lib/turn-stats.sh` | Per-user-turn stats (line 2, `stats` mode) |
+| `subagent-statusline.sh` | Second entry point, for `subagentStatusLine`: one JSON line per agent-panel row, always `exit 0`, nothing printed on failure (§4.19) |
+| `lib/subagent-display.sh` | Subagent row: model-id mapping, sparkline cells, status, row fitting (`sa_row`), per-call extraction from the agent transcript (§4.19) |
 | `lib/transcript-cache.sh` | `_tx_cached`: size+mtime memoisation of transcript `jq` output (§4.18) |
-| `lib/subagent-cost.sh` | Subagent cost from subagent transcripts |
-| `lib/format-utils.sh` | `humanize_tokens`, `format_turn_dur`, `format_age`, `window_elapsed_pct`, `plan_pace_color`; state dir `cc_state_dir_init` / `_cc_private_dir` / `_cc_write_file` (§4.18) |
+| `lib/format-utils.sh` | `vislen` / fork-free `vislen_v`, `vis_truncate`, `kilos`, `humanize_tokens`, `format_turn_dur`, `format_age`, `window_elapsed_pct`, `plan_pace_color`; state dir `cc_state_dir_init` / `_cc_private_dir` / `_cc_write_file` (§4.18) |
 | `lib/colors.sh` | SGR constants: `RESET`, `RESET_FG`, `RESET_DIM`, `BOLD` |
 | *external* `account-validation.sh` | `get_mode` / `get_api_provider` / `validate_state`, shared with the `claude-account` switcher and kept in that repo. Located via `$CC_STATUSLINE_ACCOUNT_LIB`, else the first line of `~/.claude/statusline-account-lib`, else `$HOME/code/cc-switch/lib/account-validation.sh`. Absent → no-op fallbacks (mode `plan`, provider `anthropic`, state consistent) and the account badge is skipped |
 
-The entry point resolves its own directory through the `~/.claude/statusline-command.sh` symlink (a `while [ -L ]` walk, no `readlink -f`, for bash 3.2) and sources `lib/` relative to it.
+Both entry points resolve their own directory through their `~/.claude/` symlink (a `while [ -L ]` walk, no `readlink -f`, for bash 3.2) and sources `lib/` relative to it.
 
 ### 3.2 Data sources
 
@@ -134,7 +149,8 @@ The entry point resolves its own directory through the `~/.claude/statusline-com
 |--------|----------|
 | Statusline JSON payload (also dumped to `statusbar.json` in the private state dir for debugging, §4.18) | model, dir, cost, `context_window.current_usage`, `rate_limits`, `effort.level`, `output_style.name`, `fast_mode`, `thinking.enabled` |
 | Session transcript `.jsonl` | sparkline / stats streams, context fallback, cache-expiry timestamp — all via the state dir's `tx-cache/` (§4.18) |
-| `<session>/subagents/agent-*.jsonl` | subagent cost |
+| Subagent status-line payload (also dumped to `subagent-payload.json` in the state dir for debugging) | `columns`, `transcript_path`, and per task `id`, `name`, `agentType`, `status`, `startTime`, `model`, `effort`, `tokenCount` (§4.19) |
+| `<session>/subagents/agent-<id>.jsonl` | per-call context sizes for the subagent sparkline, via `tx-cache/` kind `subcalls` (§4.19) |
 | `stats-cache.json` | API-mode daily/weekly token counts |
 | `~/.claude/account-mode` | account badge |
 | Flag files: `statusline-line2`, `sparkline-always-on`, `statusline-chrome-cols` | mode/behaviour switches |
@@ -502,20 +518,10 @@ context is 0/unparseable. That left `🧠 260k` + 3 spaces before the timer's ow
 prepended to a non-empty `BAR_SEC` instead, which fixes both paths at once and
 keeps the section gap at exactly the canonical two columns.
 
-### 4.13 Cost includes subagents (2026-07-12)
+### 4.13 (retired)
 
-The payload's `total_cost_usd` is main-thread only. `lib/subagent-cost.sh`
-computes per-subagent cost from `<session>/subagents/agent-*.jsonl` token usage ×
-per-model base price (cache read ×0.1, 5m write ×1.25, 1h write ×2.0), deduped
-by `message.id`, cached by file size + mtime in the private state dir (§4.18).
-
-Validated by reproducing a session's main-thread `total_cost_usd` from its
-transcript (Opus 4.8 = $5/$25). `claude-model-info.py` misprices Opus 4.8 as
-4.5's $15/$75, so a **static table in `subagent-cost.sh` is the source of
-truth**.
-
-Spec: `plans/2026-07-12-statusline-wrap-design.md`; plan:
-`plans/2026-07-12-statusline-wrap-plan.md`.
+Formerly "Cost includes subagents"; reversed 2026-11-06 and moved to §5
+("Estimating subagent cost"). Line 1's `$` is the payload value as-is (FR7).
 
 ### 4.14 Line-2 truncation walks backward from newest
 
@@ -768,12 +774,12 @@ Kinds: `spark` and `stats` cache the existing stream programs unchanged, and
 the last non-zero token total, replacing the two separate scans in
 `format_cache_expiry` and `get_transcript_context`. `last` reads the last 1500
 lines and falls back to the whole file only if that window holds neither value,
-so a transcript tail of sidechain or user noise still resolves.
+so a transcript tail of sidechain or user noise still resolves. `subcalls` caches
+a subagent transcript's per-call context sizes (§4.19).
 
 **State lives in a private per-user directory.** The payload dump
-(`statusbar.json`), the timing log (`statusline-timing.log`), the subagent cost
-cache (`subagent-cost-cache`, §4.13) and the transcript cache (`tx-cache/`) all
-live in one state dir, resolved once per render by `cc_state_dir_init` in
+(`statusbar.json`), the timing log (`statusline-timing.log`) and the transcript
+cache (`tx-cache/`) all live in one state dir, resolved once per render by `cc_state_dir_init` in
 `lib/format-utils.sh`: `$CC_STATUSLINE_STATE_DIR`, else
 `$XDG_RUNTIME_DIR/cc-statusline`, else `$HOME/.cache/cc-statusline` (macOS has
 no `XDG_RUNTIME_DIR`), with trailing slashes dropped (a `TX_CACHE_DIR` override
@@ -783,25 +789,21 @@ dir is not a symlink, is a directory, and is owned by the current user (`-O`);
 `-L` is tested first because `-d`, `-O` and `mkdir -p` all follow a link. When
 it is refused — a symlink (even to a dir the user owns), a regular file, a dir
 owned by someone else, a relative path, or a path that cannot be created —
-`CC_STATE_DIR` is empty: the dump and the timing log are skipped, subagent and
-transcript work is computed uncached, and the render is otherwise unchanged and
+`CC_STATE_DIR` is empty: the dump and the timing log are skipped, transcript
+work is computed uncached, and the render is otherwise unchanged and
 exits 0.
 
 The shared, world-writable `/tmp/claude` this replaces let another local user
 pre-create the directory and plant symlinks: the dump and the timing log were
 written through them, clobbering or appending to any file the user owns and
-leaking the payload, and subagent-cost hits were read back unvalidated into the
-displayed cost. Those are worse than the cosmetic residual a shared transcript
+leaking the payload. That is worse than the cosmetic residual a shared transcript
 cache leaves, and once a private dir exists the transcript cache uses it too.
 Inside it, writes still do not trust what they find. The dump is replaced
 through a temp file and `mv` (a planted symlink is replaced, not followed, and a
-concurrent render never reads half a file); the timing log and the subagent
-cache are not written through a symlink. Both append-only files are dropped and
-started over past 262144 bytes, since the state dir, unlike `/tmp`, may survive
-a reboot. A subagent-cost hit must match the exact shape `subagent_cost` prints
-— `%.6f` with no leading zero, or the bare `0` of its early returns — or it is a
-miss and is recomputed; a path holding a tab or newline is never cached, since
-the record is one tab-split line. `TX_CACHE_DIR` overrides the transcript cache
+concurrent render never reads half a file); the timing log is not written
+through a symlink. The log is append-only, so it is dropped and started over
+past 262144 bytes, since the state dir, unlike `/tmp`, may survive a reboot.
+`TX_CACHE_DIR` overrides the transcript cache
 location (the test suite uses it), and `_tx_cached` holds an override to the
 same `_cc_private_dir` check on every call before it reads or writes; the check
 is builtins only unless the dir has to be created. Only the last path component
@@ -817,7 +819,8 @@ and overwritten. The rules, all in `lib/transcript-cache.sh`:
 
 - *Shapes.* Each kind accepts only the line shapes its producer emits.
   `_tx_valid_last` takes an ISO timestamp or empty, then an integer or empty,
-  and no further line. `_tx_valid_spark` and `_tx_valid_stats` take any number
+  and no further line. `_tx_valid_subcalls` takes one integer per line and at
+  most `_TX_SUBCALLS_MAX` (16) lines, the producer's own cap. `_tx_valid_spark` and `_tx_valid_stats` take any number
   of `U <epoch>` and `A …` lines, up to the line cap below.
   `<req>` and `<stop>` hold no whitespace at all, because consumers split `A`
   lines with default-IFS `read -r` and a tab inside `<req>` would shift a planted
@@ -887,9 +890,126 @@ Rendered output was byte-identical against the pre-change script for plan and
 API mode, `sparkline` and `stats`, at 120 and 60 columns, apart from the
 `now`-dependent running-turn duration.
 
+### 4.19 Subagent rows: `subagent-statusline.sh` (2026-11-06)
+
+Claude Code's agent panel shows one row per visible subagent. With
+`subagentStatusLine` set, it runs the command once per refresh tick with every
+visible row in one JSON object — base hook fields, `columns` (the usable row
+width) and `tasks[]` — and takes one `{"id", "content"}` JSON line per row to
+replace; a row whose id is not echoed keeps the default rendering. The script
+reads every field in one `jq` fork with the §4.18 U+001F discipline (control
+characters in free-text fields become spaces, so no field can carry the
+delimiter or a newline) and builds all output lines in one more `jq` fork from
+`--args` pairs, so the escaping of ANSI content is jq's. Anything unparseable
+prints nothing and exits 0: the default rows are a better failure than a broken
+one. The last payload is dumped to `subagent-payload.json` in the state dir
+through `_cc_write_file`, for debugging only.
+
+A row reads, left to right:
+
+```
+▶ 4m12  general-purpose  ❷ Opus ● high  ⛁ 117k ██▃  ▁▁▂▂▃▃▄▅▅▆▇█▇▇██
+```
+
+- **Status.** `▶` running (CYAN, with the time since `startTime` in
+  `format_turn_dur`'s compact form, CYAN being the timing colour), `✔`
+  completed (GREEN), `✘` failed (RED), `■` killed (YELLOW), `?` for any other
+  status. The payload carries no end time, so a finished agent shows no
+  duration.
+- **Agent.** `agentType`, or `name (agentType)` when the agent has a name.
+- **Model and effort.** `render_model_sec` (§4.17), unchanged. The payload gives
+  a model *id*, so `sa_model_name` maps it to the display name that module
+  keys on: `claude-opus-5-5` → `Opus 5.5`, a trailing date and a `[1m]`-style
+  suffix dropped, the old version-first form (`claude-3-5-sonnet-…`) handled;
+  any other shape passes through and renders as an unranked model. A missing
+  model or an effort outside the five levels (the payload may send a numeric
+  token budget) omits that element.
+- **Context.** `tokenCount` with line 1's value colour (`get_token_color`),
+  number format (`kilos`) and growth bar (`display_token_bar`), so a subagent's
+  context reads exactly like the session's.
+- **Sparkline.** One cell per API call, the last 16, oldest left. A cell's value
+  is that call's context size, `input + cache_read + cache_creation + output`.
+  Band = ⌊value / 50000⌋ picks a fg-on-bg pair: blue on black (`40`, explicit,
+  so the cell reads the same on any background), green on blue, yellow on
+  green, red on yellow, magenta on red, bright magenta on magenta, and from
+  300k a solid bright-magenta block. The height inside the band is `▁…█` in
+  eight steps of 6250. Each cell's background is the previous band's colour,
+  so a run that crosses a band boundary shows it as a colour step. Colours are
+  emitted only on change and both are reset after the run.
+
+**Per-call data comes from the agent's transcript, not `tokenSamples`.** The
+payload's `tokenSamples` are `tokenCount` readings taken once per refresh tick:
+an idle agent repeats one value, a busy one skips calls, so they show ticks, not
+calls. The transcript at `${transcript_path%.jsonl}/subagents/agent-<id>.jsonl`
+has every call's usage. Streaming writes one message several times under one
+`message.id`, so entries are deduplicated by id (largest total kept, first-seen
+order). A call that ran a server-side tool — the advisor — logs top-level usage
+summed over its `iterations` (two model passes around the tool call), which
+reported a ~157k context as 312k, so when `iterations` holds a `message` entry
+the last one is read instead; line 1's transcript context fallback
+(`_tx_last_jq`) reads usage the same way. The producer reads the transcript's last 240
+lines (a call writes about six, and lines run to several KB, so the full
+1500-line window would push megabytes through `jq` on every new line of a busy
+agent) and parses each line with `fromjson?`, so a line being written does not
+void the rest. Its output is cached through `_tx_cached` as kind `subcalls`,
+validated by `_tx_valid_subcalls` (integers only, at most 16 lines). The task id
+is used in a path only if it is a plain word (`[[:alnum:]_-]`); a missing or
+empty transcript leaves the row without a sparkline.
+
+**Width.** The row must fit `columns` (80 when the payload has none or a
+non-number; `columns` is already the usable width, so no chrome is reserved).
+Under pressure the sparkline loses cells oldest-first until it is gone, then the
+bar is elided (§4.12, from 9 blocks) and then dropped, then model and effort
+shrink to their glyphs, then the agent label is cut with `…` and then dropped;
+`vis_truncate` is the last resort. Cells go first because the newest few carry
+the trend and the gauge beside them already gives the current value; the agent
+label goes last because it is what tells two rows apart. Once the bar is
+degraded the sparkline stays off, so the drop order is strict.
+
+**Cost per tick.** The script runs on every tick for every visible agent, so the
+row is assembled in variables (`_v` helpers that assign rather than print), the
+prefix is measured once with the fork-free `vislen_v`, and the bar and cells are
+fitted by arithmetic: `token_bar_width` gives `display_token_bar`'s width
+without rendering it, held equal to it by a test. Measured with an exec shim and
+xtrace (2026-11-06, five tasks, three with live transcripts): about 61 forks
+warm, 82 cold — a single main-statusline render is about 76. `kilos` no longer
+forks `bc` for an integer and `_stat_sig` makes one `stat` call, not two, which
+the main statusline shares.
+
+**Intensity is never touched.** The main statusline is rendered dim and §4.11
+re-asserts dim after each segment. Whether the agent panel renders rows dim is
+not documented and not observable from the script, so a row changes neither
+bold nor dim: the entry point binds `RESET_DIM` to `RESET_FG` before rendering,
+which turns the shared modules' closes into foreground-only resets, and its own
+segments close with `RESET_FG` / `RESET_BG`.
+
+**What the row leaves out.** No cost: Claude Code reports none per agent, and
+estimating one from a price table was rejected (§5). The default row's
+`description` / `label` text (what the agent is doing) is not shown either; the
+row's width goes to the per-call history instead.
+
 ---
 
 ## 5. Rejected Alternatives
+
+**Estimating subagent cost** (2026-07-12, reversed 2026-11-06). Line 1's `$`
+used to add an estimate for the session's subagents to the payload's
+main-thread `total_cost_usd`: each `<session>/subagents/agent-*.jsonl` was
+deduped by `message.id`, its token usage priced from a static per-model table
+(cache read ×0.1, 5m write ×1.25, 1h write ×2.0) and the result cached in the
+state dir. The table went stale as models shipped: current ids such as
+`claude-opus-5-5` fell into its old `*opus*` row at $15/$75, and
+`claude-fable-5-1` into the $3/$15 default, so the displayed figure was neither
+Claude Code's nor right. Any static table has the same failure on the next
+model release, and no payload field carries prices. The `$` shows only figures
+Claude Code reports, so it is main-thread only until Claude Code reports more;
+the subagent rows (§4.19) show no cost for the same reason.
+
+**`tokenSamples` for the subagent sparkline** (2026-11-06). The payload already
+carries up to 16 context readings per agent, but they are taken once per refresh
+tick, not once per API call: an agent waiting on a long tool repeats one value
+and a fast one skips calls. The agent's transcript has one usage record per
+call, at the cost of a cached `jq` pass (§4.19).
 
 **Burn-rate `×N` on plan windows** (removed 2026-07-02). B (window-elapsed
 percent) conveys the same information directly — burn = A/B — so the derived
@@ -969,7 +1089,8 @@ which give the line a purpose the old session-stats display lacked.
 SGR stripped, UTF-8 continuation bytes dropped — so every glyph advances exactly
 one column as far as the layout ladder is concerned. Several glyphs in use are
 East-Asian *ambiguous* width: the rank digits `❶❷❸❹` and the effort glyphs
-`○◐●◉◈` (§4.17), and the growth bar's elision `⋯` (U+22EF, §4.12). A terminal
+`○◐●◉◈` (§4.17), the growth bar's elision `⋯` (U+22EF, §4.12), and the
+subagent status glyphs `▶` (U+25B6) and `■` (U+25A0) (§4.19). A terminal
 configured to render ambiguous characters double-width overruns each row's
 budget by one column per such glyph — the elided bar by one, the identity group
 by up to five.
@@ -981,6 +1102,10 @@ for a configuration nobody here uses, and the failure is cosmetic — one column
 of overrun, absorbed by the truncation `…` or by one extra wrapped row. Picking
 non-ambiguous glyphs instead would cost the rank/effort vocabulary §4.17
 settled on. Recorded rather than fixed.
+
+**The agent panel's intensity is unverified.** The subagent row is built to
+leave intensity alone (§4.19), but how the panel renders it — dim like the main
+statusline, or not — has not been observed.
 
 ---
 
@@ -1020,3 +1145,6 @@ settled on. Recorded rather than fixed.
 | 2026-10-09 | `vis_truncate` classifies UTF-8 continuation bytes by membership in a byte set (`_VT_CONT`) instead of by the value of `printf %d "'<byte>"`, which bash 3.2 (macOS `/bin/bash`) returns negative for a byte above 0x7F, so every continuation byte counted as a cell |
 | 2026-11-06 | Extracted into the `cc-statusline` repository: `lib/` sourced relative to the resolved script location, `account-validation.sh` left with `claude-account` and located via `$CC_STATUSLINE_ACCOUNT_LIB` / pointer file / default with no-op fallbacks |
 | 2026-11-06 | `/tmp/claude` replaced by a private per-user state dir (`$CC_STATUSLINE_STATE_DIR` / `$XDG_RUNTIME_DIR` / `~/.cache`, `cc-statusline`, 0700, owner-checked, not a symlink) for the payload dump, timing log, subagent cost cache and transcript cache; dump written by temp file + `mv`; subagent hits shape-checked; append-only files capped at 262144 bytes; per-user directory removed from §5 and adopted in §4.18 |
+| 2026-11-06 | Subagent cost estimate removed (`lib/subagent-cost.sh`, its price table and state-dir cache): line 1's `$` is the payload's `total_cost_usd` as-is, main-thread only; §4.13 retired and moved to §5 |
+| 2026-11-06 | `subagent-statusline.sh` renders the agent panel's rows (`lib/subagent-display.sh`, §4.19): status, agent type, model/effort, context gauge, 16-call context sparkline from the agent transcript (cache kind `subcalls`); `kilos` without `bc`, `_stat_sig` in one `stat`, `vislen_v`, `token_bar_width`; NFR7's bright-magenta exception extended to the sparkline |
+| 2026-11-09 | Line 1's transcript context fallback reads the last `message` entry of `usage.iterations` when present, not the advisor-summed top-level usage (§4.19) |
