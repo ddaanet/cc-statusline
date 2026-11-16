@@ -8,7 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   flat script of `assert` calls under `## <section>` headings; there is no
   per-test filter. Grep the output for a section or `FAIL`.
 - `just lint` — `shellcheck -x` over both entry points, `lib/*.sh` and the tests.
-- `just precommit` — lint + test.
+- `just test-bash32` — the suite again under macOS `/bin/bash` (3.2), with a
+  PATH shim so the entry points it spawns run under 3.2 too; `#!/usr/bin/env
+  bash` and `just test` otherwise pick up a Homebrew bash 5. Skips when
+  `/bin/bash` is not 3.2.
+- `just precommit` — lint + test + test-bash32.
 - `just install` / `just uninstall` — symlink `~/.claude/statusline-command.sh`
   and `~/.claude/subagent-statusline.sh` to this checkout.
 - Manual render: pipe a payload into the script, isolated from the real home

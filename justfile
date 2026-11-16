@@ -55,5 +55,19 @@ test:
 lint:
     shellcheck -x statusline-command.sh subagent-statusline.sh lib/*.sh test-statusline-helpers.sh
 
-# lint + test
-precommit: lint test
+# Run the suite again under /bin/bash when it is bash 3.2 (macOS): a PATH shim
+# makes the entry points the suite spawns run under 3.2 too. Skipped elsewhere.
+test-bash32:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! /bin/bash -c '(( BASH_VERSINFO[0] < 4 ))' 2>/dev/null; then
+        echo "test-bash32: /bin/bash is not bash 3.2, skipped"
+        exit 0
+    fi
+    shim=$(mktemp -d "${TMPDIR:-/tmp}/bash32-shim.XXXXXX")
+    trap 'rm -rf "$shim"' EXIT
+    ln -s /bin/bash "$shim/bash"
+    PATH="$shim:$PATH" /bin/bash test-statusline-helpers.sh
+
+# lint + test (+ the bash 3.2 run on macOS)
+precommit: lint test test-bash32

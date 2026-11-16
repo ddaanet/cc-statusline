@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the pure-bash statusline helpers (vis_truncate, vislen).
+# shellcheck disable=SC2329  # stubs and producers are called indirectly (by name, via overrides)
 
 set -uo pipefail
 
