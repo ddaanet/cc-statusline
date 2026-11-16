@@ -316,24 +316,26 @@ if [[ "$MODE" != "plan" ]]; then
     emit_truncated "$account_buf" "$EFFECTIVE_COLS"
 fi
 
-# Selectable second line. ~/.claude/statusline-line2 = "stats" → per-turn
-# numeric stats; anything else (default) → the per-API-call sparkline. Both
-# renderers are width-aware by construction and emit their own leading
-# newline only when there's content to show.
+# Selectable second line, from ~/.claude/statusline-line2: "stats" → per-turn
+# numeric stats, "off" → no second line, anything else (default) → the
+# per-API-call sparkline. Both renderers are width-aware by construction and
+# emit their own leading newline only when there's content to show.
 if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
     line2_mode=sparkline
     if [[ -f "$HOME/.claude/statusline-line2" ]]; then
         line2_mode=$(<"$HOME/.claude/statusline-line2")
         line2_mode=${line2_mode//[[:space:]]/}
     fi
-    if [[ "$line2_mode" == "stats" ]]; then
-        display_turn_stats "$TRANSCRIPT_PATH" "$EFFECTIVE_COLS"
-    else
-        # ~/.claude/sparkline-always-on: keep the sparkline visible when idle
-        spark_always_on=0
-        [[ -f "$HOME/.claude/sparkline-always-on" ]] && spark_always_on=1
-        display_turn_sparkline "$TRANSCRIPT_PATH" "" "$spark_always_on"
-    fi
+    case "$line2_mode" in
+        off) ;;
+        stats) display_turn_stats "$TRANSCRIPT_PATH" "$EFFECTIVE_COLS" ;;
+        *)
+            # ~/.claude/sparkline-always-on: keep the sparkline visible when idle
+            spark_always_on=0
+            [[ -f "$HOME/.claude/sparkline-always-on" ]] && spark_always_on=1
+            display_turn_sparkline "$TRANSCRIPT_PATH" "" "$spark_always_on"
+            ;;
+    esac
 fi
 
 # Ensure script exits successfully

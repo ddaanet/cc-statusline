@@ -6,8 +6,9 @@ YELLOW=$'\033[33m'
 BLUE=$'\033[34m'
 MAGENTA=$'\033[35m'
 CYAN=$'\033[36m'
-# The one bright variant (NFR7 otherwise bans them): the context growth bar
-# alternates MAGENTA/BRMAGENTA past 200k so its blocks stay countable.
+# The one bright variant (NFR7 otherwise bans them): the context colour past
+# 200k, where plain magenta lacks contrast against red, and the growth bar
+# alternates BRMAGENTA/MAGENTA from there so its blocks stay countable.
 BRMAGENTA=$'\033[95m'
 # Leading \033[22m clears any inherited intensity (esp. DIM from RESET_DIM)
 # before setting bold: Claude CLI's renderer doesn't treat bold(1)/faint(2) as

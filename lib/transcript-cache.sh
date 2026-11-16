@@ -81,14 +81,6 @@ _tx_valid_stats() {
     _tx_lines_match "U $_TX_UINT|A $_TX_WORD $_TX_UINT $_TX_UINT $_TX_UINT $_TX_UINT $_TX_UINT $_TX_WORD" "$1"
 }
 
-# subcalls: one per-call context size per line, at most _TX_SUBCALLS_MAX lines
-# (the subagent sparkline's cell count; _sa_calls_jq emits no more).
-_TX_SUBCALLS_MAX=16
-_tx_valid_subcalls() {
-    local nl=$'\n'
-    [[ "${1%"$nl"}$nl" =~ ^($_TX_UINT$nl){1,$_TX_SUBCALLS_MAX}$ ]]
-}
-
 # _tx_body_ok <kind> <body>
 # An unknown kind or an oversized body is rejected. An empty body is valid for
 # every kind that has a validator, so a transcript with no turns keeps hitting.

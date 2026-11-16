@@ -4,9 +4,10 @@
 # Globals consumed: BLUE GREEN YELLOW RED MAGENTA BRMAGENTA RESET_DIM
 
 # Get color for token count
-# Color sequence (50k blocks): blue green yellow red magenta.
-# Stops at magenta above 200k on purpose: the growth bar's alternation past
+# Color sequence (50k blocks): blue green yellow red brmagenta.
+# Stops at brmagenta above 200k on purpose: the growth bar's alternation past
 # 250k exists to make its blocks countable, and a single value has no blocks.
+# Bright, not plain magenta: plain magenta follows red with too little contrast.
 get_token_color() {
     local tokens=$1
     # Handle empty, unset, or non-numeric values
@@ -21,14 +22,15 @@ get_token_color() {
     elif [ "$tokens" -lt 200000 ]; then
         echo -n "$RED"
     else
-        echo -n "$MAGENTA"
+        echo -n "$BRMAGENTA"
     fi
 }
 
 # Colour of the $2'th 50k range of the growth bar, assigned into var named $1.
 # 0–200k keeps the historic blue/green/yellow/red ramp; from 200k on the ranges
-# alternate MAGENTA / BRMAGENTA so a long bar's blocks remain countable
+# alternate BRMAGENTA / MAGENTA so a long bar's blocks remain countable
 # (a 1M window is 20 blocks; one flat magenta run reads as a single smear).
+# The range after red is BRMAGENTA: plain magenta beside red lacks contrast.
 # printf -v, not an echo + $(…): this runs once per block on every render.
 _token_bar_color() {
     local _c
@@ -37,7 +39,7 @@ _token_bar_color() {
         1) _c=$GREEN ;;
         2) _c=$YELLOW ;;
         3) _c=$RED ;;
-        *) if (( $2 % 2 )); then _c=$BRMAGENTA; else _c=$MAGENTA; fi ;;
+        *) if (( $2 % 2 )); then _c=$MAGENTA; else _c=$BRMAGENTA; fi ;;
     esac
     printf -v "$1" '%s' "$_c"
 }
@@ -58,7 +60,7 @@ token_bar_width() {
 
 # Display vertical-growth token bar
 # One char per 50k range, height shows fill within range (▁▂▃▄▅▆▇█)
-# Colors: blue green yellow red, then magenta/brmagenta alternating
+# Colors: blue green yellow red, then brmagenta/magenta alternating
 # $2="elide": drop the middle ranges — the 0–250k head, a BRMAGENTA ⋯, then the
 # last two blocks (§4.12). Only kicks in once that is actually narrower than the
 # whole bar; below the threshold the two forms are byte-identical.
@@ -118,7 +120,7 @@ display_token_bar() {
 #   1. timestamp of the last non-sidechain assistant entry ("" if none)
 #   2. total tokens of the last such entry with non-zero usage ("" if none).
 #      A call that ran the advisor logs top-level usage summed over its
-#      `iterations`; its last `message` iteration is read instead (§4.19).
+#      `iterations`; its last `message` iteration is read instead (§4.12).
 # Scans the last 1500 lines and only falls back to the whole file when that
 # window holds neither, so a transcript tail of sidechain/tool noise still
 # resolves. $1 = transcript path.

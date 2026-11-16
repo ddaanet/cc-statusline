@@ -31,15 +31,14 @@ reads the JSON payload from stdin, resolves its own directory through the
 `lib/*.sh` relative to it, then emits line 1 (identity + cost/context/timer,
 plus plan limits in plan mode; `$` is the payload's `cost.total_cost_usd`
 as-is, main-thread only — no cost is estimated), the account line in API mode, and an optional
-last line (`sparkline` per API call or `stats` per user turn, selected by
-`~/.claude/statusline-line2`).
+last line (`sparkline` per API call, `stats` per user turn, or `off`, selected
+by `~/.claude/statusline-line2`).
 
 `subagent-statusline.sh` is a second entry point, for `subagentStatusLine`: it
 resolves its directory and sources `lib/` the same way, parses the panel payload
 (`columns`, `tasks[]`) in one `jq` fork, and writes one `{"id","content"}` JSON
 line per agent row, built by `lib/subagent-display.sh` (status, agent type,
-model/effort, context gauge, a sparkline of the agent's last 16 calls read from
-`<session>/subagents/agent-<id>.jsonl`). Any failure prints nothing, which keeps
+model/effort, context gauge). Any failure prints nothing, which keeps
 Claude Code's default rows. It runs every tick for every agent: assemble with
 the `_v` helpers (assign, don't `$( )`) and fit widths arithmetically.
 
@@ -77,8 +76,8 @@ the `_v` helpers (assign, don't `$( )`) and fit widths arithmetically.
   `RESET_FG`, not `RESET` (which clears the dim for the rest of the line);
   only `lib/sparkline.sh` uses `RESET` on purpose. `BOLD` is
   `\033[22m\033[1m` because the CLI does not let bare `\033[1m` override dim.
-  16 base ANSI colours only (sole exception: bright magenta, in the context bar
-  and the subagent sparkline's top bands). The subagent row never changes
+  16 base ANSI colours only (sole exception: bright magenta, the context
+  colour from 200k and half the bar's alternation). The subagent row never changes
   intensity: its entry point binds `RESET_DIM` to `RESET_FG`.
 - **Defensive arithmetic:** validate every number (`^[0-9]+$`, not empty, not
   `unset`) before `$(( ))`; empty transcript values are normal.

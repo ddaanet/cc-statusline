@@ -18,13 +18,12 @@ Display format:
   (§4.2).
 - API mode: an extra line `API  <switchback time | token usage>`, or
   `Auth state inconsistent` when the account library reports a mismatch.
-- Optional last line: per-call sparkline (default) or per-turn stats (§4.3–4.8).
+- Optional last line: per-call sparkline (default), per-turn stats, or `off`
+  (§4.3–4.8), from `~/.claude/statusline-line2`.
 - Agent panel (`subagent-statusline.sh`): one row per subagent, e.g.
-  `▶ 4m12  general-purpose  ❷ Opus ● high  ⛁ 117k ██▃  ▁▂▃…` — status, agent
-  type, model/effort, context gauge, and a sparkline of the agent's last 16
-  calls (context size per call, 50k bands as fg-on-bg pairs, 300k+ solid bright
-  magenta). Cells drop oldest-first under width pressure, then the bar, then
-  labels. No cost; intensity never changed (§4.19).
+  `▶ 4m12  general-purpose  ❷ Opus ● high  ⛁ 117k ██▃` — status, agent
+  type, model/effort, context gauge. The bar drops first under width pressure,
+  then labels. No cost; intensity never changed (§4.19).
 
 Indicators:
 - Model rank `❶ Fable` / `❷ Opus` / `❸ Sonnet` / `❹ Haiku`, then effort
@@ -57,10 +56,10 @@ use those.
 | 50–100k | Green |
 | 100–150k | Yellow |
 | 150–200k | Red |
-| 200k+ | Magenta (bar blocks alternate Magenta / Bright magenta from 250k) |
+| 200k+ | Bright magenta (bar blocks alternate Bright magenta / Magenta, 200–250k bright) |
 
-Bright magenta in the bar and in the subagent sparkline's top bands is the only
-bright colour allowed (NFR7). Colour
+Bright magenta is the only bright colour allowed (NFR7): plain magenta after red
+lacks contrast. Colour
 coding (16-colour ANSI, theme-neutral): GREEN = input/additions, YELLOW =
 output, CYAN = cached/timing, RED = deletions.
 

@@ -52,7 +52,7 @@ the same steps.
 With `subagentStatusLine` set, each row of the agent panel shows, left to right:
 
 ```
-▶ 4m12  general-purpose  ❷ Opus ● high  ⛁ 117k ██▃  ▁▁▂▂▃▃▄▅▅▆▇█▇▇██
+▶ 4m12  general-purpose  ❷ Opus ● high  ⛁ 117k ██▃
 ```
 
 - status: `▶` running (with its running time), `✔` completed, `✘` failed,
@@ -60,13 +60,9 @@ With `subagentStatusLine` set, each row of the agent panel shows, left to right:
 - the agent type, with its name when it has one
 - model and effort, in the same glyphs as line 1
 - the agent's current context, coloured and barred like line 1's
-- a sparkline of its last 16 API calls, one cell per call: the colour pair
-  gives the 50k band (blue on black under 50k, then green on blue, yellow on
-  green, red on yellow, magenta on red, bright magenta on magenta, and solid
-  bright magenta from 300k), the height the position inside it
 
 No cost is shown: Claude Code reports none per agent. When the row is narrow,
-sparkline cells go first (oldest first), then the bar, then the labels. If the
+the bar goes first, then the labels. If the
 payload cannot be read, the script prints nothing and Claude Code keeps its
 default rows.
 
@@ -88,8 +84,9 @@ the library the same way and says which it used.
 
 Flag files under `~/.claude/`:
 
-- `statusline-line2` selects the third line: `sparkline` (per API call, the
-  default) or `stats` (per user turn). `echo stats > ~/.claude/statusline-line2`.
+- `statusline-line2` selects the last line: `sparkline` (per API call, the
+  default), `stats` (per user turn) or `off` (no last line).
+  `echo off > ~/.claude/statusline-line2`.
 - `sparkline-always-on` keeps the sparkline visible while the session is idle;
   by default it is hidden. `touch` to enable, `rm` to go back to the default.
   When always-on and idle, the trailing value is the final turn's completed

@@ -25,8 +25,6 @@ source "$SCRIPT_DIR/lib/colors.sh" || exit 0
 source "$SCRIPT_DIR/lib/format-utils.sh" || exit 0
 # shellcheck source=lib/model-display.sh
 source "$SCRIPT_DIR/lib/model-display.sh" || exit 0
-# shellcheck source=lib/transcript-cache.sh
-source "$SCRIPT_DIR/lib/transcript-cache.sh" || exit 0
 # shellcheck source=lib/context-display.sh
 source "$SCRIPT_DIR/lib/context-display.sh" || exit 0
 # shellcheck source=lib/subagent-display.sh
@@ -41,7 +39,7 @@ cc_state_dir_init
 # Debugging only, never a data source.
 [[ -n "$CC_STATE_DIR" ]] && _cc_write_file "$CC_STATE_DIR/subagent-payload.json" "$input"
 
-# Every field in ONE jq fork (§4.18): a header line (columns, transcript path),
+# Every field in ONE jq fork (§4.18): a header line (columns),
 # then one line per task, fields joined by U+001F. Control characters in the
 # free-text fields become spaces, so no field can hold the delimiter or a
 # newline. A payload that is not an object fails the fork and prints nothing.
@@ -49,17 +47,17 @@ cc_state_dir_init
 parsed=$(printf '%s' "$input" | jq -r '
     def s: if . == null then "" else tostring | gsub("[\u0000-\u001f\u007f]"; " ") end;
     if type != "object" then error("not an object") else . end
-    | ([(.columns | s), (.transcript_path | s)] | join("\u001f")),
+    | (.columns | s),
       (.tasks | if type == "array" then .[] else empty end | select(type == "object")
        | [.id, .name, .agentType, .status, .startTime, .model, .effort, .tokenCount]
        | map(s) | join("\u001f"))' 2>/dev/null) || exit 0
 [[ -n "$parsed" ]] || exit 0
 
-cols="" tp="" now="" first=1 st="" label="" row=""
+cols="" now="" first=1 st="" label="" row=""
 out=()
 while IFS=$'\x1f' read -r id name atype status start model effort tok; do
     if (( first )); then
-        first=0 cols=$id tp=$name
+        first=0 cols=$id
         [[ "$cols" =~ ^[123456789][0123456789]{0,4}$ ]] || cols=80
         continue
     fi
@@ -72,13 +70,9 @@ while IFS=$'\x1f' read -r id name atype status start model effort tok; do
             (( elapsed < 0 )) && elapsed=0
         fi
     fi
-    calls=()
-    while IFS= read -r v; do
-        [[ "$v" =~ ^[0123456789]{1,18}$ ]] && calls+=("$v")
-    done <<< "$(sa_agent_calls "$tp" "$id")"
     _sa_status_v st "$status" "$elapsed"
     _sa_label_v label "$name" "$atype"
-    _sa_row_v row "$cols" "$st" "$label" "$model" "$effort" "$tok" ${calls[@]+"${calls[@]}"}
+    _sa_row_v row "$cols" "$st" "$label" "$model" "$effort" "$tok"
     out+=("$id" "$row")
 done <<< "$parsed"
 

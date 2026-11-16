@@ -831,20 +831,26 @@ assert "non-numeric → nothing"   "$(display_token_bar abc)"    ""
 assert "empty → nothing"         "$(display_token_bar '')"     ""
 assert "partial first range"     "$(display_token_bar 42000)"  "${BLUE}${_B7}${RESET_DIM}"
 
-# 200–250k stays MAGENTA; from 250k the ranges alternate BRMAGENTA/MAGENTA.
-assert "250k → four full + magenta full" "$(display_token_bar 250000)" \
-    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${MAGENTA}${_BLK}${RESET_DIM}"
-assert "260k → 250-300k range is brmagenta" "$(display_token_bar 260000)" \
-    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${MAGENTA}${_BLK}${BRMAGENTA}${_B2}${RESET_DIM}"
-assert "320k → alternates back to magenta" "$(display_token_bar 320000)" \
-    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${MAGENTA}${_BLK}${BRMAGENTA}${_BLK}${MAGENTA}${_B3}${RESET_DIM}"
+# 200–250k is BRMAGENTA (plain magenta beside red lacks contrast); from there
+# the ranges alternate MAGENTA/BRMAGENTA.
+assert "250k → four full + brmagenta full" "$(display_token_bar 250000)" \
+    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${BRMAGENTA}${_BLK}${RESET_DIM}"
+assert "260k → 250-300k range is magenta" "$(display_token_bar 260000)" \
+    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${BRMAGENTA}${_BLK}${MAGENTA}${_B2}${RESET_DIM}"
+assert "320k → alternates back to brmagenta" "$(display_token_bar 320000)" \
+    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${BRMAGENTA}${_BLK}${MAGENTA}${_BLK}${BRMAGENTA}${_B3}${RESET_DIM}"
 
 # A 1M window is 20 blocks and the alternation is still running at the far end
-# (range 19 is odd → brmagenta). The old five-colour table capped the bar at 5.
+# (range 19 is odd → magenta). The old five-colour table capped the bar at 5.
 _tb=$(display_token_bar 1000000)
 assert "1M → 20 blocks"            "$(vislen "$_tb")" "20"
-assert "1M ends on a brmagenta block" \
-    "$([[ "$_tb" == *"${BRMAGENTA}${_BLK}${RESET_DIM}" ]] && echo 1 || echo 0)" "1"
+assert "1M ends on a magenta block" \
+    "$([[ "$_tb" == *"${MAGENTA}${_BLK}${RESET_DIM}" ]] && echo 1 || echo 0)" "1"
+
+echo "## get_token_color"
+assert "199999 → red"       "$(get_token_color 199999)" "$RED"
+assert "200000 → brmagenta" "$(get_token_color 200000)" "$BRMAGENTA"
+assert "1M → brmagenta"     "$(get_token_color 1000000)" "$BRMAGENTA"
 # Runaway guard: absurd totals stop at 32 blocks instead of looping forever.
 assert "cap at 32 blocks" "$(vislen "$(display_token_bar 99000000)")" "32"
 
@@ -863,15 +869,15 @@ assert "9 blocks → elides, saving one column" \
 assert "9 blocks unelided is still 9" \
     "$(vislen "$(display_token_bar 450000)")" "9"
 
-# 1M: head ramp, one ⋯, then ranges 18 (magenta) and 19 (brmagenta) — the tail
+# 1M: head ramp, one ⋯, then ranges 18 (brmagenta) and 19 (magenta) — the tail
 # keeps its true parity so the alternation stays readable through the elision.
 assert "1M elided → head ⋯ last two" "$(display_token_bar 1000000 elide)" \
-    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${MAGENTA}${_BLK}${BRMAGENTA}${_ELL}${MAGENTA}${_BLK}${BRMAGENTA}${_BLK}${RESET_DIM}"
+    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${BRMAGENTA}${_BLK}${BRMAGENTA}${_ELL}${BRMAGENTA}${_BLK}${MAGENTA}${_BLK}${RESET_DIM}"
 assert "1M elided → 8 columns" "$(vislen "$(display_token_bar 1000000 elide)")" "8"
 # Opposite tail parity, and a partial final block: the live fill survives.
-assert "1.02M elided → brmagenta full then magenta partial" \
+assert "1.02M elided → magenta full then brmagenta partial" \
     "$(display_token_bar 1020000 elide)" \
-    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${MAGENTA}${_BLK}${BRMAGENTA}${_ELL}${BRMAGENTA}${_BLK}${MAGENTA}${_B3}${RESET_DIM}"
+    "${BLUE}${_BLK}${GREEN}${_BLK}${YELLOW}${_BLK}${RED}${_BLK}${BRMAGENTA}${_BLK}${BRMAGENTA}${_ELL}${MAGENTA}${_BLK}${BRMAGENTA}${_B3}${RESET_DIM}"
 # Width is flat past the threshold — that is the point of the rung.
 assert "1.6M elided → still 8 columns" "$(vislen "$(display_token_bar 1600000 elide)")" "8"
 # Unknown mode strings are not elision (and one-arg calls must keep working).
@@ -1240,6 +1246,25 @@ _sp_out4=$(_sp_run '{"model":{"display_name":"Opus 4.8"}}')
 assert "plan limits absent → no Plan section" "$([[ "$_sp_out4" == *Plan* ]] && echo shown || echo hidden)" "hidden"
 assert "empty payload exits 0" "$(printf '' | HOME="$_sp_home" bash "$HERE/statusline-command.sh" >/dev/null 2>&1; echo $?)" "0"
 
+echo "## statusline-line2 selects the last line"
+_l2_tx="$TEST_TMP/l2.jsonl"
+cat > "$_l2_tx" <<'JSONL'
+{"type":"user","timestamp":"2026-05-26T10:00:00.000Z","message":{"content":"hello"}}
+{"type":"assistant","timestamp":"2026-05-26T10:00:08.000Z","requestId":"r1","message":{"stop_reason":"end_turn","usage":{"input_tokens":2000,"output_tokens":300,"cache_read_input_tokens":50000,"cache_creation_input_tokens":0}}}
+JSONL
+_l2_payload=$(jq -cn --arg tp "$_l2_tx" '{model: {display_name: "Opus 4.8"}, transcript_path: $tp}')
+_l2_lines() { # $1=statusline-line2 content ("" = no file) → line count
+    rm -f "$_sp_home/.claude/statusline-line2"
+    [[ -n "$1" ]] && printf '%s\n' "$1" > "$_sp_home/.claude/statusline-line2"
+    _sp_run "$_l2_payload" | wc -l | tr -d ' '
+}
+touch "$_sp_home/.claude/sparkline-always-on"
+_l2_default=$(_l2_lines '')
+_l2_off=$(_l2_lines off)
+assert "off drops the sparkline line (default and sparkline keep it)" "$(_l2_lines sparkline)|$(( _l2_default - _l2_off ))" "$_l2_default|1"
+assert "surrounding whitespace is ignored" "$(_l2_lines ' off ')" "$_l2_off"
+rm -f "$_sp_home/.claude/statusline-line2" "$_sp_home/.claude/sparkline-always-on"
+
 echo "## private state directory"
 _st_payload='{"model":{"display_name":"Opus 4.8"}}'
 _st_run() { # $1=state dir → "<exit status>|<output or none>|<stderr: clean or noisy>"
@@ -1339,30 +1364,6 @@ assert "old version-first id"    "$(sa_model_name claude-3-5-sonnet-20241022)" "
 assert "unknown shape passes through" "$(sa_model_name gpt-something)"         "gpt-something"
 assert "empty → empty"           "$(sa_model_name '')"                         ""
 
-echo "## subagent row: sparkline cell bands and heights"
-_sa_c() { _sa_cell "$1"; printf '%q|%q|%s' "$_SA_CELL_BG" "$_SA_CELL_FG" "$_SA_CELL_GLYPH"; }
-_sa_w() { printf '%q|%q|%s' "$1" "$2" "$3"; }
-assert "0 → blue on black, lowest"   "$(_sa_c 0)"      "$(_sa_w $'\033[40m' $'\033[34m' ▁)"
-assert "6249 still lowest step"      "$(_sa_c 6249)"   "$(_sa_w $'\033[40m' $'\033[34m' ▁)"
-assert "6250 second step"            "$(_sa_c 6250)"   "$(_sa_w $'\033[40m' $'\033[34m' ▂)"
-assert "25000 fifth step"            "$(_sa_c 25000)"  "$(_sa_w $'\033[40m' $'\033[34m' ▅)"
-assert "49999 full block in band 0"  "$(_sa_c 49999)"  "$(_sa_w $'\033[40m' $'\033[34m' █)"
-assert "50000 green on blue"         "$(_sa_c 50000)"  "$(_sa_w $'\033[44m' $'\033[32m' ▁)"
-assert "100000 yellow on green"      "$(_sa_c 100000)" "$(_sa_w $'\033[42m' $'\033[33m' ▁)"
-assert "175000 red on yellow"        "$(_sa_c 175000)" "$(_sa_w $'\033[43m' $'\033[31m' ▅)"
-assert "200000 magenta on red"       "$(_sa_c 200000)" "$(_sa_w $'\033[41m' $'\033[35m' ▁)"
-assert "299999 brmagenta on magenta" "$(_sa_c 299999)" "$(_sa_w $'\033[45m' $'\033[95m' █)"
-assert "300000 solid brmagenta"      "$(_sa_c 300000)" "$(_sa_w $'\033[105m' $'\033[95m' █)"
-assert "2000000 still solid"         "$(_sa_c 2000000)" "$(_sa_w $'\033[105m' $'\033[95m' █)"
-# shellcheck disable=SC2016  # literal $( ) is the payload
-assert "non-numeric → no cell"       "$(_sa_c 'a[$(x)]')" "$(_sa_w '' '' '')"
-
-echo "## subagent row: sparkline run"
-assert "colours emitted on change only, reset after" \
-    "$(sa_sparkline 0 1000 50000 56249)" \
-    $'\033[40m\033[34m▁▁\033[44m\033[32m▁▁\033[49m\033[39m'
-assert "no values → nothing" "$(sa_sparkline)" ""
-
 echo "## subagent row: status"
 assert "running: cyan play + elapsed" "$(sa_status_sec running 252)" "${CYAN}▶ 4m12${RESET_FG}"
 assert "completed: green check"       "$(sa_status_sec completed '')" "${GREEN}✔${RESET_FG}"
@@ -1381,88 +1382,35 @@ echo "## subagent row: assembly and width"
 _sa_strip() { printf '%s' "$1" | sed $'s/\x1b\\[[0-9;]*m//g'; }
 _sa_ic=$'\xef\x87\x80'
 _sa_st=$(sa_status_sec running 252)
-# Eight old lowest-step cells, then eight new full ones: a cut that keeps the
-# newest shows only █.
-_sa_cells=(0 0 0 0 0 0 0 0 49999 49999 49999 49999 49999 49999 49999 49999)
-_sa_r() { sa_row "$1" "$_sa_st" general-purpose claude-opus-5-5 high 116800 "${_sa_cells[@]}"; }
+_sa_r() { sa_row "$1" "$_sa_st" general-purpose claude-opus-5-5 high 116800; }
 _sa_pre="▶ 4m12  general-purpose  ❷ Opus ● high  $_sa_ic 117k"
-assert "wide: every element, all 16 cells" "$(_sa_strip "$(_sa_r 200)")" "$_sa_pre ██▃  ▁▁▁▁▁▁▁▁████████"
-assert "60 cols: oldest cells dropped first" "$(_sa_strip "$(_sa_r 60)")" "$_sa_pre ██▃  ████████"
-assert "53 cols: one newest cell"            "$(_sa_strip "$(_sa_r 53)")" "$_sa_pre ██▃  █"
-assert "52 cols: no room, sparkline gone"    "$(_sa_strip "$(_sa_r 52)")" "$_sa_pre ██▃"
-assert "49 cols: then the bar"               "$(_sa_strip "$(_sa_r 49)")" "$_sa_pre"
+assert "wide: every element"                 "$(_sa_strip "$(_sa_r 200)")" "$_sa_pre ██▃"
+assert "50 cols: the bar just fits"          "$(_sa_strip "$(_sa_r 50)")" "$_sa_pre ██▃"
+assert "49 cols: the bar goes first"         "$(_sa_strip "$(_sa_r 49)")" "$_sa_pre"
 assert "45 cols: then the model/effort labels" "$(_sa_strip "$(_sa_r 45)")" "▶ 4m12  general-purpose  ❷ ●  $_sa_ic 117k"
 assert "30 cols: then the agent label is cut" "$(_sa_strip "$(_sa_r 30)")" "▶ 4m12  general-…  ❷ ●  $_sa_ic 117k"
 assert "20 cols: agent label dropped"         "$(_sa_strip "$(_sa_r 20)")" "▶ 4m12  ❷ ●  $_sa_ic 117k"
 _sa_fit=ok
-for _sa_cols in 1 5 10 15 20 24 30 40 45 50 52 53 60 68 80; do
+for _sa_cols in 1 5 10 15 20 24 30 40 45 49 50 51 60 80; do
     _sa_wd=$(vislen "$(_sa_r "$_sa_cols")")
     (( _sa_wd <= _sa_cols )) || _sa_fit="$_sa_cols cols → $_sa_wd"
 done
 assert "never wider than columns" "$_sa_fit" "ok"
 assert "1M context: bar elided before it is dropped" \
-    "$(_sa_strip "$(sa_row 57 "$_sa_st" general-purpose claude-opus-5-5 high 1000000 "${_sa_cells[@]}")")" \
+    "$(_sa_strip "$(sa_row 57 "$_sa_st" general-purpose claude-opus-5-5 high 1000000)")" \
     "▶ 4m12  general-purpose  ❷ Opus ● high  $_sa_ic 1000k █████⋯██"
-assert "no model, effort, tokens or cells" "$(_sa_strip "$(sa_row 80 "$_sa_st" general-purpose '' '' '')")" "▶ 4m12  general-purpose"
+assert "no model, effort or tokens" "$(_sa_strip "$(sa_row 80 "$_sa_st" general-purpose '' '' '')")" "▶ 4m12  general-purpose"
 assert "numeric effort budget is omitted" \
     "$(_sa_strip "$(sa_row 80 "$_sa_st" '' claude-sonnet-5-5 16000 5000)")" "▶ 4m12  ❸ Sonnet  $_sa_ic  5k ▁"
 assert "gauge uses the line-1 value colour" \
     "$([[ "$(sa_row 80 "$_sa_st" x '' '' 116800)" == *"${YELLOW}${_sa_ic} 117k"* ]] && echo yes)" "yes"
 
-echo "## subagent transcript: per-call context sizes"
-_sa_dir="$TEST_TMP/sa"; mkdir -p "$_sa_dir/sess/subagents"; : > "$_sa_dir/sess.jsonl"
-_sa_tx="$_sa_dir/sess/subagents/agent-a1b2.jsonl"
-_sa_u() { # id in cr cc out
-    printf '{"type":"assistant","isSidechain":true,"message":{"id":"%s","usage":{"input_tokens":%d,"cache_read_input_tokens":%d,"cache_creation_input_tokens":%d,"output_tokens":%d}}}\n' "$@"
-}
-{
-    printf '{"type":"user","message":{"content":"go"}}\n'
-    for _sa_i in $(seq 1 18); do
-        # Streaming writes the same message twice; the second entry is the final one.
-        _sa_u "m$_sa_i" 1 $(( _sa_i * 1000 )) 10 5
-        printf '{"type":"user","message":{"content":[{"type":"tool_result"}]}}\n'
-        _sa_u "m$_sa_i" 1 $(( _sa_i * 1000 )) 10 50
-    done
-    printf '{"type":"assistant","message":{"usage":{"input_tokens":9}}}\n'   # no id: ignored
-    printf '{"type":"assistant","message":{"id":"half'                       # torn last line
-} > "$_sa_tx"
-# Calls 3..18, oldest first: 1 + i*1000 + 10 + 50.
-_sa_want=$(for _sa_i in $(seq 3 18); do printf '%d\n' $(( _sa_i * 1000 + 61 )); done)
-TX_CACHE_DIR="$TEST_TMP/txc-sa"
-assert "last 16 calls, deduped, oldest first" "$(sa_agent_calls "$_sa_dir/sess.jsonl" a1b2)" "$_sa_want"
-assert "real producer body passes the validator" "$(_tx_body_ok subcalls "$(_tx_cached subcalls "$_sa_tx" _sa_calls_jq)" && echo ok)" "ok"
-assert "missing agent transcript → nothing" "$(sa_agent_calls "$_sa_dir/sess.jsonl" nope)" ""
-# A call that ran a server-side tool (the advisor) logs top-level usage summed
-# over its iterations; its context is the last model iteration's, not the sum.
-_sa_itx="$_sa_dir/sess/subagents/agent-iter.jsonl"
-printf '%s\n' '{"type":"assistant","message":{"id":"it1","usage":{"input_tokens":4,"cache_read_input_tokens":299452,"cache_creation_input_tokens":12698,"output_tokens":342,"iterations":[{"type":"message","input_tokens":2,"output_tokens":187,"cache_read_input_tokens":144636,"cache_creation_input_tokens":10180},{"type":"advisor_message","input_tokens":146951,"output_tokens":14732,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},{"type":"message","input_tokens":2,"output_tokens":155,"cache_read_input_tokens":154816,"cache_creation_input_tokens":2518}]}}}' \
-    '{"type":"assistant","message":{"id":"it2","usage":{"input_tokens":1,"cache_read_input_tokens":2,"cache_creation_input_tokens":3,"output_tokens":4,"iterations":[]}}}' > "$_sa_itx"
-assert "server-tool call: last model iteration's context" "$(sa_agent_calls "$_sa_dir/sess.jsonl" iter)" $'157491\n10'
-# agent-x/ exists, so x/../agent-a1b2 resolves to a real transcript: only the id
-# check stands between it and a read.
-mkdir -p "$_sa_dir/sess/subagents/agent-x"
-assert "fixture: traversal path resolves" "$([[ -f "$_sa_dir/sess/subagents/agent-x/../agent-a1b2.jsonl" ]] && echo yes)" "yes"
-assert "id with a path separator → nothing" "$(sa_agent_calls "$_sa_dir/sess.jsonl" 'x/../agent-a1b2')" ""
-assert "no transcript path → nothing" "$(sa_agent_calls '' a1b2)" ""
-_sa_plant() { mkdir -p "$TX_CACHE_DIR"; { printf '%s\n' "$(_stat_sig "$_sa_tx")"; printf '%s' "$1"; } > "$TX_CACHE_DIR/${_sa_tx//\//_}.subcalls"; }
-_sa_plant $'7\n8\n'
-assert "well-formed planted body is read back" "$(sa_agent_calls "$_sa_dir/sess.jsonl" a1b2)" $'7\n8'
-# shellcheck disable=SC2016  # literal $( ) is the payload
-_sa_plant 'PASS[$(touch${IFS}'"$TEST_TMP/sa-pwned"')]'$'\n'
-assert "planted expression is a miss" "$(sa_agent_calls "$_sa_dir/sess.jsonl" a1b2)" "$_sa_want"
-assert "17 lines is a miss" "$(_tx_body_ok subcalls "$(seq 1 17)"$'\n' && echo ok || echo bad)" "bad"
-assert "16 lines is accepted" "$(_tx_body_ok subcalls "$(seq 1 16)"$'\n' && echo ok || echo bad)" "ok"
-assert "leading zero is a miss" "$(_tx_body_ok subcalls $'07\n' && echo ok || echo bad)" "bad"
-assert "empty body is accepted" "$(_tx_body_ok subcalls '' && echo ok || echo bad)" "ok"
-unset TX_CACHE_DIR
-
 echo "## subagent-statusline.sh end to end"
 _sa_now_ms=$(( $(date +%s) * 1000 ))
 # Sanitized from a real capture (subagent-payload.json): session id and paths
 # replaced, a named failed task and an effort added to cover those fields.
-_sa_payload=$(jq -c --arg tp "$_sa_dir/sess.jsonl" --argjson st $(( _sa_now_ms - 125000 )) \
-    '.transcript_path = $tp | .tasks[0].startTime = $st' <<'JSON'
-{"session_id":"00000000-0000-0000-0000-000000000000","transcript_path":"","cwd":"/work/repo","prompt_id":"11111111-1111-1111-1111-111111111111","columns":95,"tasks":[
+_sa_payload=$(jq -c --argjson st $(( _sa_now_ms - 125000 )) '.tasks[0].startTime = $st' <<'JSON'
+{"session_id":"00000000-0000-0000-0000-000000000000","transcript_path":"/work/sess.jsonl","cwd":"/work/repo","prompt_id":"11111111-1111-1111-1111-111111111111","columns":95,"tasks":[
  {"id":"a1b2","type":"local_agent","agentType":"general-purpose","status":"running","description":"Remove cost estimate, build agent rows","label":"Editing CLAUDE.md","startTime":0,"model":"claude-opus-5-5","contextWindowSize":1000000,"tokenCount":116800,"tokenSamples":[94248,99361,110659,116800],"cwd":"/work/repo"},
  {"id":"c3d4","type":"local_agent","agentType":"general-purpose","status":"completed","description":"Survey","label":"Survey","startTime":1794003820486,"model":"claude-sonnet-5-5","contextWindowSize":1000000,"tokenCount":59714,"tokenSamples":[59714],"cwd":"/work/repo"},
  {"id":"e5f6","name":"scout","type":"local_agent","agentType":"Explore","status":"failed","description":"Look around","label":"Look around","startTime":1794003820486,"effort":"high","tokenCount":0,"tokenSamples":[],"cwd":"/work/repo"}]}
@@ -1472,7 +1420,7 @@ _sa_state="$TEST_TMP/sa-state"
 _sa_run() { # $1=stdin → stdout; stderr discarded, exit status appended as "rc=N"
     local out rc
     out=$(printf '%s' "$1" | HOME="$_sp_home" CC_STATUSLINE_STATE_DIR="$_sa_state" \
-        TX_CACHE_DIR="$TEST_TMP/txc-sa2" bash "$HERE/subagent-statusline.sh" 2>/dev/null)
+        bash "$HERE/subagent-statusline.sh" 2>/dev/null)
     rc=$?
     printf '%s\nrc=%d' "$out" "$rc"
 }
@@ -1481,9 +1429,9 @@ assert "one JSON line per task, ids echoed in order, exit 0" \
     "$(printf '%s\n' "$_sa_out" | sed '$d' | jq -r .id 2>&1 | paste -sd, -)|${_sa_out##*$'\n'}" "a1b2,c3d4,e5f6|rc=0"
 _sa_rows=$(printf '%s\n' "$_sa_out" | sed '$d' | jq -r .content 2>/dev/null)
 _sa_r1=$(_sa_strip "$(sed -n 1p <<< "$_sa_rows")")
-assert "running row: status, type, model, gauge, sparkline" \
-    "$([[ "$_sa_r1" =~ ^▶\ 2m0[456]\ \ general-purpose\ \ ❷\ Opus\ \ $_sa_ic\ 117k\ ██▃\ \ ▁▁▁▁▂▂▂▂▂▂▃▃▃▃▃▃$ ]] && echo yes || printf '%q' "$_sa_r1")" "yes"
-assert "completed row without a transcript: no sparkline" \
+assert "running row: status, type, model, gauge" \
+    "$([[ "$_sa_r1" =~ ^▶\ 2m0[456]\ \ general-purpose\ \ ❷\ Opus\ \ $_sa_ic\ 117k\ ██▃$ ]] && echo yes || printf '%q' "$_sa_r1")" "yes"
+assert "completed row" \
     "$(_sa_strip "$(sed -n 2p <<< "$_sa_rows")")" "✔  general-purpose  ❸ Sonnet  $_sa_ic 60k █▂"
 assert "failed row: name, effort, zero gauge" \
     "$(_sa_strip "$(sed -n 3p <<< "$_sa_rows")")" "✘  scout (Explore)  ● high  $_sa_ic   0"
