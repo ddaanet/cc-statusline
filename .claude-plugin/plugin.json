@@ -1,0 +1,8 @@
+{
+  "name": "cc-statusline",
+  "version": "0.1.0",
+  "description": "Statusline for Claude Code: a bash line renderer plus a mod for subagent rows and the Fable weekly limit",
+  "author": {
+    "name": "David Allouche"
+  }
+}
