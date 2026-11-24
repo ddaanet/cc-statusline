@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
-  agentRow, barWidth, CYAN, formatDur, ICON_CTX, kilos, modelName, RESET_FG, statusSec, tokenBar, visLen, YELLOW,
+  agentRow, barWidth, CYAN, isLive, formatDur, ICON_CTX, kilos, modelName, RESET_FG, statusSec, tokenBar, visLen, YELLOW,
 } from './agent-row'
 
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '')
@@ -23,12 +23,17 @@ describe('modelName', () => {
   })
 })
 
-test('status glyphs, elapsed only while running', async () => {
+test('status glyphs, elapsed only while running or waiting', async () => {
   expect(statusSec('running', 252)).toBe(CYAN + '▶ 4m12' + RESET_FG)
+  expect(statusSec('waiting', 252)).toBe(CYAN + '⏸ 4m12' + RESET_FG)
+  expect(statusSec('idle', 252)).toBe('◌')
+  expect(statusSec('pending', 252)).toBe('…')
+  expect(statusSec('completed', 252)).not.toContain('4m12')
   expect(strip(statusSec('completed'))).toBe('✔')
   expect(strip(statusSec('failed'))).toBe('✘')
   expect(strip(statusSec('killed'))).toBe('■')
-  expect(statusSec('idle')).toBe('?')
+  expect(statusSec('paused')).toBe('?')
+  expect(statusSec('constructor')).toBe('?')
 })
 
 test('durations read as format_turn_dur', async () => {
@@ -72,6 +77,15 @@ describe('width fitting', () => {
     for (const c of [1, 5, 10, 15, 20, 24, 30, 40, 45, 49, 50, 51, 60, 80]) expect(visLen(opus(c))).toBeLessThanOrEqual(c)
   })
   test('no columns: 80', async () => expect(opus(undefined)).toBe(opus(80)))
+})
+
+test('only running and waiting are live', async () => {
+  expect(['pending', 'running', 'waiting', 'idle', 'completed', 'failed', 'killed'].filter(isLive)).toEqual(['running', 'waiting'])
+})
+
+test('a waiting row keeps its time, an idle one has none', async () => {
+  expect(strip(agentRow({ status: 'waiting', type: 'Explore', startTime: T0 }, 80, NOW))).toBe('⏸ 4m12  Explore')
+  expect(strip(agentRow({ status: 'idle', name: 'mate', type: 'teammate', startTime: T0 }, 80, NOW))).toBe('◌  mate (teammate)')
 })
 
 test('missing fields drop their element', async () => {

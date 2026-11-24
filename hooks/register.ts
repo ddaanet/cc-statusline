@@ -1,5 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code'
-import { agentRow } from './agent-row'
+import { agentRow, isLive } from './agent-row'
 import { ENV_PROBE, envFromProbe, fableFile, fableLine, parseFable, stateDir } from './fable'
 
 // The state dir, or '' when unusable. The mod never creates it: the statusline
@@ -38,17 +38,16 @@ export const register: Register = on => {
 
   // The agent panel's rows (statusline-design.md §4.19): the row's body is ours,
   // the engine keeps the pointer, connector and selection. Any failure leaves
-  // the engine's own row. The status is the task's (pending, running,
-  // completed, failed, killed, paused), as the subagentStatusLine payload gave
-  // it: a subagent waiting on its own child still reads as running.
+  // the engine's own row. The status is the agent's loop (AgentStatus): one
+  // waiting on its own background work or child reads as waiting, its time
+  // still moving; a teammate between turns reads as idle.
   on('ui.render', { component: 'AgentRow' }, async ($, e, next) => {
     let body = ''
     try {
-      const status = e.props.taskStatus
-      body = agentRow({ ...e.props, status }, e.props.columns, await $.clock.now())
+      body = agentRow(e.props, e.props.columns, await $.clock.now())
       // A row is asked again only as its props change, which a quiet agent's
-      // stop doing: while one runs, re-ask every few seconds so its time moves.
-      if (status === 'running' && !tick) {
+      // stop doing: while one is live, re-ask every few seconds so its time moves.
+      if (isLive(e.props.status) && !tick) {
         tick = $.clock.after(TICK_MS, () => {
           tick = undefined
           $.ui.invalidate('ui.render')

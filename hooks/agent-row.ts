@@ -59,15 +59,24 @@ export function formatDur(s: number): string {
   return m === 0 ? h + 'h' : h + 'h' + String(m).padStart(2, '0')
 }
 
+// The AgentStatus values: pending, idle and waiting are the engine's own, which
+// the subagentStatusLine payload never carried. '' draws the glyph uncoloured.
 const STATUS: Record<string, [string, string]> = {
-  running: [CYAN, '▶'], completed: [GREEN, '✔'], failed: [RED, '✘'], killed: [YELLOW, '■'],
+  pending: ['', '…'], running: [CYAN, '▶'], waiting: [CYAN, '⏸'], idle: ['', '◌'],
+  completed: [GREEN, '✔'], failed: [RED, '✘'], killed: [YELLOW, '■'],
 }
 
-// Status glyph in its colour, plus the elapsed seconds of a running agent.
+// Whether the agent's turn is under way, so its elapsed time moves.
+export function isLive(status: string): boolean {
+  return status === 'running' || status === 'waiting'
+}
+
+// Status glyph in its colour, plus the elapsed seconds of a live agent.
 export function statusSec(status: string, elapsed?: number): string {
   const g = Object.hasOwn(STATUS, status) ? STATUS[status] : undefined
   if (!g) return '?'
-  const dur = status === 'running' && elapsed !== undefined ? ' ' + formatDur(elapsed) : ''
+  const dur = isLive(status) && elapsed !== undefined ? ' ' + formatDur(elapsed) : ''
+  if (!g[0]) return g[1] + dur
   return g[0] + g[1] + dur + RESET_FG
 }
 
@@ -201,7 +210,7 @@ export function agentRow(a: RowAgent, columns: number | undefined, nowMs: number
   const cols = Number.isInteger(columns) && columns! > 0 && columns! < 100000 ? columns! : 80
   const status = clean(a.status)
   let elapsed: number | undefined
-  if (status === 'running' && Number.isSafeInteger(a.startTime) && a.startTime! >= 0 && Number.isFinite(nowMs)) {
+  if (isLive(status) && Number.isSafeInteger(a.startTime) && a.startTime! >= 0 && Number.isFinite(nowMs)) {
     elapsed = Math.max(0, Math.floor(nowMs / 1000) - Math.floor(a.startTime! / 1000))
   }
   const st = statusSec(status, elapsed)
