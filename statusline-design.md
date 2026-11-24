@@ -992,15 +992,12 @@ neither to the statusline payload, whose `rate_limits` holds only
   `session.start` it deletes `fable-*` files untouched for 8 days: past a
   7-day window none can be read. The session id is read at each write, so a
   `/clear` or `/resume` under the same module load moves to the new file.
-  Until the path is confirmed on a live session, the first engine response of
-  each load also writes `fable-probe` (the `7d_oi` header names seen, the
-  parsed window, the session id and target file).
 - **One file per session.** A single shared file would keep showing another
   account's figure after a cc-switch account change until the new account's
-  responses carry the headers, which may take a week if they only come while
-  Fable is in use. The session id is in both the payload (`session_id`) and
-  the mod (`$.session.id()`), so each side names the same file; both refuse an
-  id outside `[A-Za-z0-9-]{1,64}`.
+  responses carry the headers, and they come only on Fable responses (an Opus
+  response carries neither, observed 2026-11-24). The session id is in both
+  the payload (`session_id`) and the mod (`$.session.id()`), so each side
+  names the same file; both refuse an id outside `[A-Za-z0-9-]{1,64}`.
 - **The statusline reads it fork-free.** `read_fable_limit`
   (`lib/account-display.sh`) uses `read`, validates both numbers, and drops a
   reading whose reset has passed; `now` comes from the render's start stamp.

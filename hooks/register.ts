@@ -17,9 +17,6 @@ export const register: Register = on => {
   // The last file and line written: a session id that changes under the same
   // module (/clear, /resume) names a new file, so the pair is the key.
   let lastKey = ''
-  // Once per module load: a breadcrumb of how far the first engine response
-  // got, for checking the path end to end (statusline-design.md §4.20).
-  let probed = false
 
   on('session.start', async ($, e, next) => {
     const res = await next(e)
@@ -40,18 +37,6 @@ export const register: Register = on => {
     try {
       const headers = 'value' in res ? res.value?.headers : undefined
       const fable = parseFable(headers)
-      if (!probed) {
-        probed = true
-        const d = await resolveDir($)
-        if (d) {
-          const id = await $.session.id()
-          await $.fs.write(`${d}/fable-probe`, JSON.stringify({
-            at: new Date().toISOString(), url: e.url, hasValue: 'value' in res,
-            headers7dOi: Object.keys(headers ?? {}).filter(k => k.includes('7d_oi')),
-            fable, sessionId: id, target: fableFile(d, id),
-          }) + '\n')
-        }
-      }
       if (!fable) return res
       const line = fableLine(fable)
       const id = await $.session.id()
