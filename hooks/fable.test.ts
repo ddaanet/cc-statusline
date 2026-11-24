@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { fableFile, fableLine, parseFable, stateDir } from './fable'
+import { envFromProbe, fableFile, fableLine, parseFable, stateDir } from './fable'
 
 const H = (u?: string, r?: string): Record<string, string> => ({
   ...(u !== undefined && { 'anthropic-ratelimit-unified-7d_oi-utilization': u }),
@@ -36,6 +36,13 @@ test('fableFile is per session, and refuses an id that could leave the dir', asy
 
 test('fableLine is one read-able line', async () => {
   expect(fableLine({ percent: 7, resetsAt: 1795600800 })).toBe('7 1795600800\n')
+})
+
+test('envFromProbe reads the three lines, an empty one unset', async () => {
+  expect(envFromProbe('/s\n/x\n/h\n')).toEqual({ CC_STATUSLINE_STATE_DIR: '/s', XDG_RUNTIME_DIR: '/x', HOME: '/h' })
+  expect(envFromProbe('\n\n/h\n')).toEqual({ HOME: '/h' })
+  expect(stateDir(envFromProbe('\n\n/h\n'))).toBe('/h/.cache/cc-statusline')
+  expect(envFromProbe('')).toEqual({})
 })
 
 describe('stateDir follows cc_state_dir_init', () => {

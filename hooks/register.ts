@@ -1,11 +1,12 @@
 import type { EngineInterface, Register } from 'claude-code'
-import { fableFile, fableLine, parseFable, stateDir } from './fable'
+import { ENV_PROBE, envFromProbe, fableFile, fableLine, parseFable, stateDir } from './fable'
 
 // The state dir, or '' when unusable. The mod never creates it: the statusline
 // does, 0700 and owner-checked, so the mod only writes into a real directory
 // that is not a symlink.
 async function resolveDir($: EngineInterface): Promise<string> {
-  const d = stateDir(await $.process.hookEnv())
+  const run = await $.process.run([...ENV_PROBE])
+  const d = run.exitCode === 0 ? stateDir(envFromProbe(run.stdout)) : null
   if (!d) return ''
   const st = await $.fs.stat(d, { resolve: true }).catch(() => undefined)
   if (!st || st.kind !== 'dir' || st.isLink || st.realPath !== d.replace(/\/+$/, '')) return ''

@@ -1,0 +1,3 @@
+## Current task
+
+cc-statusline is now also a Claude Code plugin whose TypeScript mod (hooks/register.ts, hooks/fable.ts) copies the Fable weekly window from the anthropic-ratelimit-unified-7d_oi-* response headers into fable-<session_id> in the statusline state dir; line 1 renders it between 5h and 7d (statusline-design.md §4.20). The previous mod build never wrote anything because hookEnv() lacks HOME; that is fixed and the user re-ran just dogfood. First action: check ~/.cache/cc-statusline/fable-probe (and any fable-<session_id> file) after this session's first reply, and read whether the 7d_oi headers arrived on an Opus turn. If no probe exists, the mod's live path still fails somewhere: diagnose before anything else.

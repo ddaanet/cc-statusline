@@ -34,6 +34,22 @@ export function fableLine(f: FableLimit): string {
   return `${f.percent} ${f.resetsAt}\n`
 }
 
+// The shell command whose output envFromProbe reads: Claude Code's own
+// environment, as the statusline command inherits it. `$.process.hookEnv()`
+// carries only Claude Code's CLAUDE_* variables, not HOME or XDG_RUNTIME_DIR.
+export const ENV_PROBE = ['sh', '-c', 'printf "%s\\n%s\\n%s\\n" "$CC_STATUSLINE_STATE_DIR" "$XDG_RUNTIME_DIR" "$HOME"'] as const
+
+// The three variables stateDir reads, from ENV_PROBE's output; an empty line
+// is an unset variable.
+export function envFromProbe(stdout: string): Record<string, string> {
+  const [s = '', x = '', h = ''] = stdout.split('\n')
+  return {
+    ...(s && { CC_STATUSLINE_STATE_DIR: s }),
+    ...(x && { XDG_RUNTIME_DIR: x }),
+    ...(h && { HOME: h }),
+  }
+}
+
 // The state dir as cc_state_dir_init resolves it (lib/format-utils.sh):
 // $CC_STATUSLINE_STATE_DIR, else $XDG_RUNTIME_DIR/cc-statusline, else
 // $HOME/.cache/cc-statusline. Null when none can be formed.

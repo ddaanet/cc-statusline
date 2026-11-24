@@ -985,7 +985,10 @@ neither to the statusline payload, whose `rate_limits` holds only
   `<percent> <reset_epoch>` to `fable-<session_id>` in the state dir. It
   writes only when the line changes, only into a state dir that already exists
   as a real directory (the statusline creates and checks it, §4.18), and
-  swallows every error so a model request is never touched. At
+  swallows every error so a model request is never touched. It finds the
+  state dir from `HOME`, `XDG_RUNTIME_DIR` and `CC_STATUSLINE_STATE_DIR`
+  read through one `sh` child: `$.process.hookEnv()` carries only Claude
+  Code's `CLAUDE_*` variables. At
   `session.start` it deletes `fable-*` files untouched for 8 days: past a
   7-day window none can be read. The session id is read at each write, so a
   `/clear` or `/resume` under the same module load moves to the new file.
