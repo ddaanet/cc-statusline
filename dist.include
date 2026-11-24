@@ -1,3 +1,5 @@
 .claude-plugin
-hooks
+hooks/fable.ts
+hooks/hooks.json
+hooks/register.ts
 README.md
