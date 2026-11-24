@@ -1,4 +1,5 @@
 .claude-plugin
+hooks/agent-row.ts
 hooks/fable.ts
 hooks/hooks.json
 hooks/register.ts

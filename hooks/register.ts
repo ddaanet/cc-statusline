@@ -1,4 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code'
+import { agentRow } from './agent-row'
 import { ENV_PROBE, envFromProbe, fableFile, fableLine, parseFable, stateDir } from './fable'
 
 // The state dir, or '' when unusable. The mod never creates it: the statusline
@@ -13,10 +14,14 @@ async function resolveDir($: EngineInterface): Promise<string> {
   return d
 }
 
+const TICK_MS = 5000
+
 export const register: Register = on => {
   // The last file and line written: a session id that changes under the same
   // module (/clear, /resume) names a new file, so the pair is the key.
   let lastKey = ''
+  // The pending re-ask of the agent rows, while one is running.
+  let tick: { cancel(): void } | undefined
 
   on('session.start', async ($, e, next) => {
     const res = await next(e)
@@ -29,6 +34,30 @@ export const register: Register = on => {
       // Pruning is housekeeping only.
     }
     return res
+  })
+
+  // The agent panel's rows (statusline-design.md §4.19): the row's body is ours,
+  // the engine keeps the pointer, connector and selection. Any failure leaves
+  // the engine's own row. The status is the task's (pending, running,
+  // completed, failed, killed, paused), as the subagentStatusLine payload gave
+  // it: a subagent waiting on its own child still reads as running.
+  on('ui.render', { component: 'AgentRow' }, async ($, e, next) => {
+    let body = ''
+    try {
+      const status = e.props.taskStatus
+      body = agentRow({ ...e.props, status }, e.props.columns, await $.clock.now())
+      // A row is asked again only as its props change, which a quiet agent's
+      // stop doing: while one runs, re-ask every few seconds so its time moves.
+      if (status === 'running' && !tick) {
+        tick = $.clock.after(TICK_MS, () => {
+          tick = undefined
+          $.ui.invalidate('ui.render')
+        })
+      }
+    } catch {
+      body = ''
+    }
+    return body ? next({ ...e, props: { ...e.props, body } }) : next(e)
   })
 
   on('http.fetch', async ($, e, next) => {
