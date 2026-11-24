@@ -6,8 +6,8 @@ rationale is the point.
 
 **Scope**: `statusline-command.sh`, `subagent-statusline.sh` and `lib/*.sh` in
 this repository — everything Claude Code renders below the prompt, including the
-agent panel's subagent rows. Account switching itself is in
-[`account-switcher-design.md`](account-switcher-design.md); the statusline only
+agent panel's subagent rows. Account switching itself is in the cc-switch repository's
+`account-switcher-design.md`; the statusline only
 *reads* the mode it publishes.
 
 ---

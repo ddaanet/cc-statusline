@@ -72,4 +72,7 @@ test-bash32:
     PATH="$shim:$PATH" /bin/bash test-statusline-helpers.sh
 
 # lint + test (+ the bash 3.2 run on macOS)
-precommit: lint test test-bash32
+precommit: check-refs lint test test-bash32
+
+# the gate `release` depends on
+prerelease: precommit
