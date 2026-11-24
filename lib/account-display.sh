@@ -215,10 +215,32 @@ render_timer() {
     echo -n "  ${CYAN}${_hg} ${cache_expiry}${RESET_DIM}"
 }
 
+# Read the Fable weekly window the cc-statusline mod writes (hooks/fable.ts,
+# statusline-design.md §4.20) into FABLE_RAW / FABLE_RESET.
+#   $1 = state dir ("" → absent)   $2 = session id   $3 = now, epoch seconds
+# The mod writes one file per session, fable-<session id>, so a figure never
+# crosses an account switch. It holds one "<percent> <reset_epoch>" line.
+# Anything else, a missing file, or a reset already past leaves
+# FABLE_RAW="absent", FABLE_RESET="".
+read_fable_limit() {
+    FABLE_RAW=absent FABLE_RESET=""
+    local _fl_p="" _fl_r="" _fl_f
+    [[ -n "$1" && "$2" =~ ^[A-Za-z0-9-]{1,64}$ ]] || return 0
+    _fl_f="$1/fable-$2"
+    [[ -f "$_fl_f" && ! -L "$_fl_f" ]] || return 0
+    IFS=' ' read -r _fl_p _fl_r _ < "$_fl_f" 2>/dev/null || [[ -n "$_fl_r" ]] || return 0
+    [[ "$_fl_p" =~ ^[0123456789]{1,3}$ && "$_fl_r" =~ ^[0123456789]{1,12}$ ]] || return 0
+    [[ "$3" =~ ^[0123456789]{1,12}$ ]] || return 0
+    (( 10#$_fl_r > 10#$3 )) || return 0
+    FABLE_RAW=$((10#$_fl_p)) FABLE_RESET=$((10#$_fl_r))
+    return 0
+}
+
 # Render plan rate-limit status for the right side of line 1.
 # $1=style: "full" | "no_plan_label" | "no_period_labels" | "no_bars"
-# Reads globals: FIVE_RAW, FIVE_RESET, SEVEN_RAW, SEVEN_RESET, color constants.
-# Emits nothing when neither window's used_percentage is present.
+# Reads globals: FIVE_RAW, FIVE_RESET, FABLE_RAW, FABLE_RESET, SEVEN_RAW,
+# SEVEN_RESET, color constants. Windows render in that order, joined by " / ".
+# Emits nothing when no window is present.
 render_plan_right() {
     local style=${1:-full}
 
@@ -229,9 +251,11 @@ render_plan_right() {
     local five_raw=$FIVE_RAW five_reset=$FIVE_RESET
     # shellcheck disable=SC2153
     local seven_raw=$SEVEN_RAW seven_reset=$SEVEN_RESET
+    # FABLE_* come from read_fable_limit; unset reads as absent.
+    local fable_raw=${FABLE_RAW:-absent} fable_reset=${FABLE_RESET-}
 
-    # Nothing to show when neither window's data is present.
-    [[ "$five_raw" == "absent" && "$seven_raw" == "absent" ]] && return
+    # Nothing to show when no window's data is present.
+    [[ "$five_raw" == "absent" && "$fable_raw" == "absent" && "$seven_raw" == "absent" ]] && return
 
     local show_periods=1 show_bars=1 show_plan_label=0
     [[ "$style" == "no_period_labels" || "$style" == "no_bars" ]] && show_periods=0
@@ -241,18 +265,22 @@ render_plan_right() {
     echo -n "${RESET_DIM}"
     (( show_plan_label )) && echo -n "${GREEN}Plan ${RESET_DIM}"
 
-    local rendered_five=0
+    local rendered=0
     if [[ "$five_raw" != "absent" ]]; then
         _render_plan_window "5h" "$five_raw" "$five_reset" 18000 \
             "$show_periods" "$show_bars" format_5h_reset
-        rendered_five=1
+        rendered=1
     fi
 
-    if (( rendered_five )) && [[ "$seven_raw" != "absent" ]]; then
-        echo -n " / "
+    if [[ "$fable_raw" != "absent" ]]; then
+        (( rendered )) && echo -n " / "
+        _render_plan_window "Fable" "$fable_raw" "$fable_reset" 604800 \
+            "$show_periods" "$show_bars" format_7d_reset
+        rendered=1
     fi
 
     if [[ "$seven_raw" != "absent" ]]; then
+        (( rendered )) && echo -n " / "
         _render_plan_window "7d" "$seven_raw" "$seven_reset" 604800 \
             "$show_periods" "$show_bars" format_7d_reset
     fi

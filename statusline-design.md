@@ -24,8 +24,9 @@ active (mode read from `~/.claude/account-mode`).
 **FR3 — Plan-mode limits.** Each rate-limit window renders `A%/B% C`:
 A = `used_percentage` (99 promoted to 100, §4.15), B = window-elapsed percent,
 C = a vertical bar. A window renders whenever its `used_percentage` field is
-present/non-null (`0%/B% ▁` at zero); the section hides only when *neither*
-window has the field.
+present/non-null (`0%/B% ▁` at zero); the section hides only when *no*
+window has the field. Order: `5h`, `Fable` (the Fable weekly limit, read by
+the mod, §4.20), `7d`.
 
 **FR4 — API-mode usage.** Token counts instead of limits:
 `💳 API 240k today | 1.2M week`, sourced from `stats-cache.json`. Cost
@@ -136,6 +137,7 @@ it by shape, not by colour.
 | `lib/transcript-cache.sh` | `_tx_cached`: size+mtime memoisation of transcript `jq` output (§4.18) |
 | `lib/format-utils.sh` | `vislen` / fork-free `vislen_v`, `vis_truncate`, `kilos`, `humanize_tokens`, `format_turn_dur`, `format_age`, `window_elapsed_pct`, `plan_pace_color`; state dir `cc_state_dir_init` / `_cc_private_dir` / `_cc_write_file` (§4.18) |
 | `lib/colors.sh` | SGR constants: `RESET`, `RESET_FG`, `RESET_DIM`, `BOLD` |
+| `hooks/register.ts`, `hooks/fable.ts` | The cc-statusline mod (plugin `.claude-plugin/plugin.json`): copies the Fable weekly window from model-response headers into the state dir, one file per session (§4.20) |
 | *external* `account-validation.sh` | `get_mode` / `get_api_provider` / `validate_state`, shared with the `claude-account` switcher and kept in that repo. Located via `$CC_STATUSLINE_ACCOUNT_LIB`, else the first line of `~/.claude/statusline-account-lib`, else `$HOME/code/cc-switch/lib/account-validation.sh`. Absent → no-op fallbacks (mode `plan`, provider `anthropic`, state consistent) and the account badge is skipped |
 
 Both entry points resolve their own directory through their `~/.claude/` symlink (a `while [ -L ]` walk, no `readlink -f`, for bash 3.2) and sources `lib/` relative to it.
@@ -147,6 +149,7 @@ Both entry points resolve their own directory through their `~/.claude/` symlink
 | Statusline JSON payload (also dumped to `statusbar.json` in the private state dir for debugging, §4.18) | model, dir, cost, `context_window.current_usage`, `rate_limits`, `effort.level`, `output_style.name`, `fast_mode`, `thinking.enabled` |
 | Session transcript `.jsonl` | sparkline / stats streams, context fallback, cache-expiry timestamp — all via the state dir's `tx-cache/` (§4.18) |
 | Subagent status-line payload (also dumped to `subagent-payload.json` in the state dir for debugging) | `columns`, and per task `id`, `name`, `agentType`, `status`, `startTime`, `model`, `effort`, `tokenCount` (§4.19) |
+| `fable-<session_id>` in the state dir, written by the mod | Fable weekly window: `<percent> <reset_epoch>` (§4.20) |
 | `stats-cache.json` | API-mode daily/weekly token counts |
 | `~/.claude/account-mode` | account badge |
 | Flag files: `statusline-line2`, `sparkline-always-on`, `statusline-chrome-cols` | mode/behaviour switches |
@@ -966,6 +969,42 @@ estimating one from a price table was rejected (§5). The default row's
 per-call history: the row once ended with a sparkline of the agent's last 16
 calls (§5).
 
+### 4.20 Fable weekly limit through a mod (2026-11-24)
+
+Claude Code tracks a Fable weekly window (its `seven_day_overage_included`
+limit, "Fable limit" in its own messages) from the
+`anthropic-ratelimit-unified-7d_oi-utilization` (a 0–1 fraction) and
+`-7d_oi-reset` (epoch seconds) headers of each model response. It passes
+neither to the statusline payload, whose `rate_limits` holds only
+`five_hour`, `seven_day` and a gateway `spend_limit`, nor to a mod's
+`$.session.usage()` (2.1.330).
+
+- **The mod reads the headers.** This repo is also a plugin whose hooks module
+  (`hooks/register.ts`) hooks `http.fetch`, passes every request on
+  unchanged, and on an engine response that carries both headers writes
+  `<percent> <reset_epoch>` to `fable-<session_id>` in the state dir. It
+  writes only when the line changes, only into a state dir that already exists
+  as a real directory (the statusline creates and checks it, §4.18), and
+  swallows every error so a model request is never touched. At
+  `session.start` it deletes `fable-*` files untouched for 8 days: past a
+  7-day window none can be read. The session id is read at each write, so a
+  `/clear` or `/resume` under the same module load moves to the new file.
+  Until the path is confirmed on a live session, the first engine response of
+  each load also writes `fable-probe` (the `7d_oi` header names seen, the
+  parsed window, the session id and target file).
+- **One file per session.** A single shared file would keep showing another
+  account's figure after a cc-switch account change until the new account's
+  responses carry the headers, which may take a week if they only come while
+  Fable is in use. The session id is in both the payload (`session_id`) and
+  the mod (`$.session.id()`), so each side names the same file; both refuse an
+  id outside `[A-Za-z0-9-]{1,64}`.
+- **The statusline reads it fork-free.** `read_fable_limit`
+  (`lib/account-display.sh`) uses `read`, validates both numbers, and drops a
+  reading whose reset has passed; `now` comes from the render's start stamp.
+  `render_plan_right` renders it with `_render_plan_window` between 5h and 7d,
+  so it takes the same `A%/B% C` form, the 99 → 100 promotion (§4.15) and the
+  7-day reset format. Absent, line 1 is unchanged.
+
 ---
 
 ## 5. Rejected Alternatives
@@ -1083,6 +1122,13 @@ of overrun, absorbed by the truncation `…` or by one extra wrapped row. Pickin
 non-ambiguous glyphs instead would cost the rank/effort vocabulary §4.17
 settled on. Recorded rather than fixed.
 
+**The Fable window arrives only with the headers.** A session shows no Fable
+block until one of its model responses carries the `7d_oi` headers, which
+may happen only while the main model is Fable (Claude Code forgets the window
+on a model switch). Unverified on a live Fable turn as of 2026-11-24. In
+`no_period_labels` and `no_bars` styles the three windows are told apart by
+position alone.
+
 **The agent panel's intensity is unverified.** The subagent row is built to
 leave intensity alone (§4.19), but how the panel renders it — dim like the main
 statusline, or not — has not been observed.
@@ -1129,3 +1175,4 @@ statusline, or not — has not been observed.
 | 2026-11-06 | `subagent-statusline.sh` renders the agent panel's rows (`lib/subagent-display.sh`, §4.19): status, agent type, model/effort, context gauge, 16-call context sparkline from the agent transcript (cache kind `subcalls`); `kilos` without `bc`, `_stat_sig` in one `stat`, `vislen_v`, `token_bar_width`; NFR7's bright-magenta exception extended to the sparkline |
 | 2026-11-09 | Line 1's transcript context fallback reads the last `message` entry of `usage.iterations` when present, not the advisor-summed top-level usage (§4.12) |
 | 2026-11-12 | Subagent rows drop the per-call sparkline, its transcript read and cache kind `subcalls` (moved to §5); context colour after red is bright magenta, so the bar alternates bright magenta / magenta from 200k (NFR7); `statusline-line2` accepts `off`; `just test-bash32` reruns the suite under macOS `/bin/bash` |
+| 2026-11-24 | Fable weekly window on line 1 between 5h and 7d (§4.20): the repo is also a plugin whose mod copies the `7d_oi` response headers into `fable-<session_id>` in the state dir; `read_fable_limit`; payload `session_id` added to the one jq fork |

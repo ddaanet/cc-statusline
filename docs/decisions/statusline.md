@@ -14,8 +14,8 @@ Display format:
   cache-expiry timer (§4.1, §4.17). Cost is the payload's `total_cost_usd`
   as-is, main-thread only: nothing is estimated (§5). It reflows onto extra rows rather than
   dropping sections.
-- Plan mode: limits on line 1, e.g. `Plan 5h 40%/80% ▃ 23:41 / 7d 20%/50% ▂ Tue`
-  (§4.2).
+- Plan mode: limits on line 1, e.g. `Plan 5h 40%/80% ▃ 23:41 / Fable 30%/50% ▂ Tue / 7d 20%/50% ▂ Tue`
+  (§4.2); the Fable window comes from the mod (§4.20).
 - API mode: an extra line `API  <switchback time | token usage>`, or
   `Auth state inconsistent` when the account library reports a mismatch.
 - Optional last line: per-call sparkline (default), per-turn stats, or `off`
@@ -68,6 +68,9 @@ output, CYAN = cached/timing, RED = deletions.
 **Source: `rate_limits` in the statusline payload. No external API call.**
 
 Fields: `rate_limits.{five_hour,seven_day}.used_percentage` (int) and `.resets_at` (Unix epoch).
+The Fable window is not in the payload: the mod writes `fable-<session_id>` in
+the state dir from the `anthropic-ratelimit-unified-7d_oi-*` response headers
+(statusline-design.md §4.20).
 
 Reset time display:
 - 5h: `HH:MM` (always)

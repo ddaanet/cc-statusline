@@ -1246,6 +1246,55 @@ _sp_out4=$(_sp_run '{"model":{"display_name":"Opus 4.8"}}')
 assert "plan limits absent → no Plan section" "$([[ "$_sp_out4" == *Plan* ]] && echo shown || echo hidden)" "hidden"
 assert "empty payload exits 0" "$(printf '' | HOME="$_sp_home" bash "$HERE/statusline-command.sh" >/dev/null 2>&1; echo $?)" "0"
 
+echo "## Fable weekly window (mod → state dir)"
+_fl_dir="$TEST_TMP/fable-st"; mkdir -p "$_fl_dir"
+_fl_now=1795000000
+printf '42 1795600800\n' > "$_fl_dir/fable-s1"
+read_fable_limit "$_fl_dir" s1 "$_fl_now"
+assert "read: percent and reset" "$FABLE_RAW|$FABLE_RESET" "42|1795600800"
+printf '42 1795600800' > "$_fl_dir/fable-s1"
+read_fable_limit "$_fl_dir" s1 "$_fl_now"
+assert "read: no trailing newline still read" "$FABLE_RAW" "42"
+read_fable_limit "$_fl_dir" s1 1795600800
+assert "read: reset reached → absent" "$FABLE_RAW|$FABLE_RESET" "absent|"
+printf 'x 1795600800\n' > "$_fl_dir/fable-s1"
+read_fable_limit "$_fl_dir" s1 "$_fl_now"
+assert "read: non-numeric percent → absent" "$FABLE_RAW" "absent"
+printf '42\n' > "$_fl_dir/fable-s1"
+read_fable_limit "$_fl_dir" s1 "$_fl_now"
+assert "read: missing reset → absent" "$FABLE_RAW" "absent"
+printf '42 1795600800\n' > "$_fl_dir/fable-s2"
+read_fable_limit "$_fl_dir" s1 "$_fl_now"
+assert "read: another session's file is not read" "$FABLE_RAW" "absent"
+read_fable_limit "$_fl_dir" "../fable-s2" "$_fl_now"
+assert "read: session id with a path → absent" "$FABLE_RAW" "absent"
+rm -f "$_fl_dir/fable-s1" "$_fl_dir/fable-s2"
+read_fable_limit "$_fl_dir" s1 "$_fl_now"
+assert "read: no file → absent" "$FABLE_RAW" "absent"
+read_fable_limit "" s1 "$_fl_now"
+assert "read: no state dir → absent" "$FABLE_RAW" "absent"
+printf '42 1795600800\n' > "$TEST_TMP/fable-target"
+ln -s "$TEST_TMP/fable-target" "$_fl_dir/fable-s1"
+read_fable_limit "$_fl_dir" s1 "$_fl_now"
+assert "read: symlinked file → absent" "$FABLE_RAW" "absent"
+rm -f "$_fl_dir/fable-s1"
+_fl_order=$(FIVE_RAW=10 FIVE_RESET="" SEVEN_RAW=30 SEVEN_RESET="" FABLE_RAW=20 FABLE_RESET="" \
+    render_plan_right no_plan_label | sed $'s/\x1b\\[[0-9;]*m//g')
+assert "order: 5h / Fable / 7d" "$([[ "$_fl_order" == '5h '*'10%'*' / Fable '*'20%'*' / 7d '*'30%'* ]] && echo yes)" "yes"
+_fl_only=$(FIVE_RAW=absent FIVE_RESET="" SEVEN_RAW=absent SEVEN_RESET="" FABLE_RAW=20 FABLE_RESET="" \
+    render_plan_right no_plan_label | sed $'s/\x1b\\[[0-9;]*m//g')
+assert "Fable alone: no separator" "$([[ "$_fl_only" == 'Fable '*'20%'* && "$_fl_only" != *' / '* ]] && echo yes)" "yes"
+_fl_none=$(FIVE_RAW=10 FIVE_RESET="" SEVEN_RAW=30 SEVEN_RESET="" FABLE_RAW=absent FABLE_RESET="" \
+    render_plan_right no_plan_label | sed $'s/\x1b\\[[0-9;]*m//g')
+assert "Fable absent: 5h / 7d as before" "$([[ "$_fl_none" == '5h '*' / 7d '* && "$_fl_none" != *Fable* ]] && echo yes)" "yes"
+_fl_far=$(( $(date +%s) + 86400 ))
+printf '64 %s\n' "$_fl_far" > "$_fl_dir/fable-e2e"
+_fl_e2e=$(printf '%s' '{"session_id":"e2e","model":{"display_name":"Opus 4.8"},"rate_limits":{"five_hour":{"used_percentage":5},"seven_day":{"used_percentage":50}}}' \
+    | HOME="$_sp_home" COLUMNS=200 MODE_FILE="$_sp_home/.claude/account-mode" CC_STATUSLINE_STATE_DIR="$_fl_dir" \
+      TX_CACHE_DIR="$TEST_TMP/txc3" bash "$HERE/statusline-command.sh" 2>&1 | sed $'s/\x1b\\[[0-9;]*m//g')
+assert "e2e: Fable block between 5h and 7d" "$([[ "$_fl_e2e" == *'5h '*' / Fable '*'64%'*' / 7d '*'50%'* ]] && echo yes)" "yes"
+unset FABLE_RAW FABLE_RESET
+
 echo "## statusline-line2 selects the last line"
 _l2_tx="$TEST_TMP/l2.jsonl"
 cat > "$_l2_tx" <<'JSONL'

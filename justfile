@@ -71,8 +71,12 @@ test-bash32:
     ln -s /bin/bash "$shim/bash"
     PATH="$shim:$PATH" /bin/bash test-statusline-helpers.sh
 
+# The mod's tests (hooks/*.test.ts) under Claude Code's own plugin host
+test-mod:
+    claude plugin test .
+
 # lint + test (+ the bash 3.2 run on macOS)
-precommit: check-refs lint test test-bash32
+precommit: check-refs lint test test-bash32 test-mod
 
 # the gate `release` depends on
 prerelease: precommit

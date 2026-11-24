@@ -70,7 +70,7 @@ _sl_start_ms=$(date +%s%3N 2>/dev/null); [[ "$_sl_start_ms" =~ ^[0-9]+$ ]] || _s
 # is null (early in a session) so the caller falls back to the transcript.
 # shellcheck disable=SC2034  # FIVE_*/SEVEN_* are consumed by render_plan_right
 IFS=$'\x1f' read -r MODEL CURRENT_DIR TRANSCRIPT_PATH CONTEXT_TOKENS COST \
-    EFFORT FAST_MODE THINKING FIVE_RAW FIVE_RESET SEVEN_RAW SEVEN_RESET OUTPUT_STYLE \
+    EFFORT FAST_MODE THINKING FIVE_RAW FIVE_RESET SEVEN_RAW SEVEN_RESET OUTPUT_STYLE SESSION_ID \
     <<< "$(echo "$input" | jq -r '
     [ (.model.display_name // "Unknown"),
       (.workspace.current_dir // ""),
@@ -88,7 +88,8 @@ IFS=$'\x1f' read -r MODEL CURRENT_DIR TRANSCRIPT_PATH CONTEXT_TOKENS COST \
       (.rate_limits.five_hour.resets_at // ""),
       (.rate_limits.seven_day.used_percentage // "absent"),
       (.rate_limits.seven_day.resets_at // ""),
-      (.output_style.name // "" | ascii_downcase)
+      (.output_style.name // "" | ascii_downcase),
+      (.session_id // "")
     ] | map(tostring) | join("\u001f")' 2>/dev/null)"
 
 # Resolve the script's real directory. Claude Code reaches this script through
@@ -296,6 +297,10 @@ L1_CGNOBAR="$CG_NOBAR"
 L1_PLAN_INLINE=""
 L1_PLANROW=""
 if [[ "$MODE" == "plan" ]]; then
+    # The Fable weekly window is not in the payload: the mod drops it in the
+    # state dir (§4.20). Now from the start stamp, saving a date fork.
+    _now=$(( _sl_start_ms / 1000 )); (( _now > 0 )) || _now=$(date +%s)
+    read_fable_limit "$CC_STATE_DIR" "$SESSION_ID" "$_now"
     _plan_full=$(render_plan_right full)
     if [[ -n "$_plan_full" ]]; then
         L1_PLAN_INLINE="  ${_plan_full}"

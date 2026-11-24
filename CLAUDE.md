@@ -12,7 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   PATH shim so the entry points it spawns run under 3.2 too; `#!/usr/bin/env
   bash` and `just test` otherwise pick up a Homebrew bash 5. Skips when
   `/bin/bash` is not 3.2.
-- `just precommit` — lint + test + test-bash32.
+- `just test-mod` — the mod's `hooks/*.test.ts` under `claude plugin test .`.
+- `just precommit` — check-refs + lint + test + test-bash32 + test-mod.
 - `just install` / `just uninstall` — symlink `~/.claude/statusline-command.sh`
   and `~/.claude/subagent-statusline.sh` to this checkout.
 - Manual render: pipe a payload into the script, isolated from the real home
@@ -61,6 +62,12 @@ the `_v` helpers (assign, don't `$( )`) and fit widths arithmetically.
   every row. Line 1 reflows through tiers in `lib/line1-layout.sh`
   (`layout_line1`) rather than dropping segments; `vislen` / `vis_truncate`
   measure and cut SGR-laden UTF-8 strings.
+- **The mod.** The repo is also a Claude Code plugin (`.claude-plugin/`,
+  `hooks/`, shipped paths in `dist.include`): a TypeScript hooks module that
+  copies the Fable weekly window from model-response headers into
+  `fable-<session_id>` in the state dir, which line 1 reads (design §4.20).
+  It loads from the dogfood copy (`just dogfood`); `claude plugin validate .`
+  checks it.
 - **External account lib.** `account-validation.sh` (`get_mode`,
   `get_api_provider`, `validate_state`) lives in `../cc-switch`, located via
   `$CC_STATUSLINE_ACCOUNT_LIB` → `~/.claude/statusline-account-lib` → default
