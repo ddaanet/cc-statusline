@@ -1,3 +1,5 @@
+import 'plugin-dev/release.just'
+
 # cc-statusline — Claude Code statusline
 
 link := "~/.claude/statusline-command.sh"
