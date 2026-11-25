@@ -88,6 +88,14 @@ test('a waiting row keeps its time, an idle one has none', async () => {
   expect(strip(agentRow({ status: 'idle', name: 'mate', type: 'teammate', startTime: T0 }, 80, NOW))).toBe('◌  mate (teammate)')
 })
 
+test('effort: the last request first, then the agent setting', async () => {
+  const row = (extra: object) => strip(agentRow({ status: 'running', model: 'claude-opus-5-5', startTime: T0, ...extra }, 80, NOW))
+  expect(row({ lastRequest: { effort: 'xhigh' } })).toBe('▶ 4m12  ❷ Opus ◉ xhigh')
+  expect(row({ effort: 'low', lastRequest: { effort: 'medium' } })).toBe('▶ 4m12  ❷ Opus ◐ medium')
+  expect(row({ effort: 'low', lastRequest: {} })).toBe('▶ 4m12  ❷ Opus ○ low')
+  expect(row({})).toBe('▶ 4m12  ❷ Opus')
+})
+
 test('missing fields drop their element', async () => {
   expect(strip(agentRow({ status: 'running', type: 'general-purpose', startTime: T0 }, 80, NOW))).toBe('▶ 4m12  general-purpose')
   expect(strip(agentRow({ status: 'running', model: 'claude-sonnet-5-5', effort: 16000, tokenCount: 5000, startTime: T0 }, 80, NOW)))

@@ -198,6 +198,7 @@ export type RowAgent = {
   type?: string
   model?: string
   effort?: unknown
+  lastRequest?: { effort?: unknown }
   tokenCount?: number
   startTime?: number
 }
@@ -216,7 +217,10 @@ export function agentRow(a: RowAgent, columns: number | undefined, nowMs: number
   const st = statusSec(status, elapsed)
   const lab = label(clean(a.name), clean(a.type))
   const name = modelName(clean(a.model))
-  const effort = clean(a.effort)
+  // The effort the last request carried, which is the one in force even when
+  // the agent takes the session's and so has no effort of its own; before the
+  // first request, the agent's own setting.
+  const effort = clean(a.lastRequest?.effort ?? a.effort)
   const tok = Number.isSafeInteger(a.tokenCount) && a.tokenCount! >= 0 ? a.tokenCount! : undefined
 
   let ctx = '', nb = 0
